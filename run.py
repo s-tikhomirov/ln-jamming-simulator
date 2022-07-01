@@ -11,11 +11,19 @@ class Node:
 	def reset(self):
 		self.revenue, self.amount_forwarded, self.total_payments, self.failed_payments = 0, 0, 0, 0
 
-	def handle_payment(self, payment):
-		#print("handling payment:", payment)
-		#print("taking upfront fee ", payment.upfront_fee)
+	def handle(self, payment, forward):
+		# should we add discarded payments to total?
 		self.total_payments += 1
 		self.revenue += payment.upfront_fee
+		if forward:
+			# forward payment
+			self.forward(payment)
+		else:
+			# discard payment
+			pass
+
+	def forward(self, payment):
+		# FIXME: subtract downstream upfront fee!
 		if payment.success:
 			#print("taking success fee ", payment.success_fee)
 			self.amount_forwarded += payment.amount
@@ -23,6 +31,7 @@ class Node:
 		else:
 			self.failed_payments += 1
 	
+
 	def __str__(self):
 		s = ""
 		s = "Node " + self.name
@@ -58,6 +67,13 @@ class Payment:
 		s += "\n  upfront fee:	" + str(self.upfront_fee)
 		s += "\n  success_fee:	" + str(self.success_fee)
 		return s
+
+	def downstream_payment(self, fee_policy):
+		downstream_amount = self.amount - self.upfront_fee - self.success_fee
+		downstream_payment = Payment(downstream_amount, self.delay, self.success, fee_policy)
+		return downstream_payment
+
+
 
 
 class PaymentGenerator:
@@ -134,7 +150,7 @@ def total_revenue_simulated(node, payment_generator, simulation_duration):
 	while elapsed < simulation_duration:
 		payment = payment_generator.next()
 		elapsed += payment.delay
-		node.handle_payment(payment)
+		node.handle(payment, forward=True)
 	#print(node)
 	r = node.revenue
 	node.reset()
@@ -158,7 +174,6 @@ JAM_DELAY = MAX_DELAY
 
 
 def main():
-
 	alice = Node(name="Alice")
 	experiment_duration = 60*60*24
 
