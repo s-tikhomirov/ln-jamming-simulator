@@ -14,7 +14,7 @@ class Node:
 	def handle(self, payment, forward=True):
 		# should we add discarded payments to total?
 		self.total_payments += 1
-		#print("adding incoming upfront_fee", payment.upfront_fee)
+		#print("adding incoming upfront fee", payment.upfront_fee)
 		self.revenue += payment.upfront_fee
 		if forward:
 			# forward payment
@@ -25,7 +25,7 @@ class Node:
 
 	def forward(self, payment):
 		ds_payment = payment.ds_payment
-		#print("subreacting ds fee", ds_payment.upfront_fee)
+		#print("subreacting downstream upfront fee", ds_payment.upfront_fee)
 		self.revenue -= ds_payment.upfront_fee
 		if ds_payment.success:
 			self.amount_forwarded += ds_payment.amount
