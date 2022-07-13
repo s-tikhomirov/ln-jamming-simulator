@@ -42,11 +42,11 @@ class PaymentGenerator:
 		An abstract class for payment generation.
 	'''
 
-	def __init__(self, route, min_amount, max_amount, min_delay, max_delay, prob_fail, exp_time_to_next):
+	def __init__(self, route, min_amount, max_amount, min_delay, expected_extra_delay, prob_fail, exp_time_to_next):
 		self.min_amount = min_amount
 		self.max_amount = max_amount
 		self.min_delay = min_delay
-		self.max_delay = max_delay
+		self.expected_extra_delay = expected_extra_delay
 		self.prob_fail = prob_fail
 		self.exp_time_to_next = exp_time_to_next
 
@@ -56,15 +56,14 @@ class HonestPaymentGenerator(PaymentGenerator):
 		Generate the next payment in an honest payment flow.
 	'''
 
-	def __init__(self, route, min_amount, max_amount, min_delay, max_delay, prob_fail, exp_time_to_next):
-		PaymentGenerator.__init__(self, route, min_amount, max_amount, min_delay, max_delay, prob_fail, exp_time_to_next)
+	def __init__(self, route, min_amount, max_amount, min_delay, expected_extra_delay, prob_fail, exp_time_to_next):
+		PaymentGenerator.__init__(self, route, min_amount, max_amount, min_delay, expected_extra_delay, prob_fail, exp_time_to_next)
 
 	def generate_random_parameters(self):
 		# Payment amount is uniform between the maximal and minimal values
 		amount 		= random.randint(self.min_amount, self.max_amount)
-		# Payment delay is uniform between the maximal and minimal values
-		# FIXME: should it be normally distributed?
-		delay 		= random.uniform(self.min_delay, self.max_delay)
+		# Payment delay is exponentially distributed and shifted (can't be lower than some minimal delay)
+		delay 		= self.min_delay + exponential(self.expected_extra_delay)
 		# Payment success comes from a biased coin flip
 		success 	= random.random() > self.prob_fail
 		# Payment rate is the time from when this payment is initiated to when the next one is initiated
@@ -90,12 +89,11 @@ class JamPaymentGenerator(PaymentGenerator):
 
 	def __init__(self, route, jam_amount, jam_delay):
 		PaymentGenerator.__init__(self, route, min_amount = jam_amount, max_amount = jam_amount,
-			min_delay = jam_delay, max_delay = jam_delay, prob_fail = 1, exp_time_to_next = jam_delay)
+			min_delay = jam_delay, expected_extra_delay = jam_delay, prob_fail = 1, exp_time_to_next = jam_delay)
 
 	def next(self, route):
-		p = Payment(ds_payment=None, fee_policy=None, amount=self.min_amount, success=False, delay=self.max_delay)
+		p = Payment(ds_payment=None, fee_policy=None, amount=self.min_amount, success=False, delay=self.expected_extra_delay)
 		for node in reversed(route):
 			p = Payment(p, node.fee_policy)
 		# jams come exactly one after another, without any gap
-		# hence the time between jams is the length of a jam (= max_delay)
 		return p, self.exp_time_to_next
