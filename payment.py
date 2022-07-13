@@ -74,12 +74,12 @@ class HonestPaymentGenerator(PaymentGenerator):
 		time_to_next = exponential(self.exp_time_to_next)
 		return (amount, delay, success, time_to_next)
 
-	def next(self, route):
+	def next(self, route, num_payments_in_batch):
 		amount, delay, success, time_to_next = self.generate_random_parameters()
 		p = Payment(ds_payment=None, fee_policy=None, amount=amount, success=success, delay=delay)
 		for node in reversed(route):
 			p = Payment(p, node.fee_policy)
-		return p, time_to_next
+		return [p], time_to_next
 
 
 class JamPaymentGenerator(PaymentGenerator):
@@ -91,9 +91,12 @@ class JamPaymentGenerator(PaymentGenerator):
 		PaymentGenerator.__init__(self, route, min_amount = jam_amount, max_amount = jam_amount,
 			min_delay = jam_delay, expected_extra_delay = jam_delay, prob_fail = 1, exp_time_to_next = jam_delay)
 
-	def next(self, route):
+	def next(self, route, num_payments_in_batch):
 		p = Payment(ds_payment=None, fee_policy=None, amount=self.min_amount, success=False, delay=self.expected_extra_delay)
-		for node in reversed(route):
-			p = Payment(p, node.fee_policy)
+		payment_batch = []
+		for _ in range(num_payments_in_batch):
+			for node in reversed(route):
+				p = Payment(p, node.fee_policy)
+			payment_batch.append(p)
 		# jams come exactly one after another, without any gap
-		return p, self.exp_time_to_next
+		return payment_batch, self.exp_time_to_next

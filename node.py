@@ -1,8 +1,9 @@
 class Node:
 
-	def __init__(self, name, fee_policy):
+	def __init__(self, name, fee_policy, num_slots):
 		self.name = name
 		self.fee_policy = fee_policy
+		self.slot_leftovers = [0] * num_slots
 		self.reset()
 		
 	def reset(self):
@@ -11,17 +12,30 @@ class Node:
 	def set_fee_policy(self, new_fee_policy):
 		self.fee_policy = new_fee_policy
 
-	def handle(self, payment, forward=True):
-		# should we add discarded payments to total?
+	def get_free_slots(self):
+		return [i for i in range(len(self.slot_leftovers)) if self.slot_leftovers[i] == 0]
+
+	def update_slot_leftovers(self, time_to_next):
+		for i,_ in enumerate(self.slot_leftovers):
+			self.slot_leftovers[i] = max(0, self.slot_leftovers[i] - time_to_next)
+
+	def handle(self, payment_batch):
 		self.total_payments += 1
-		#print("adding incoming upfront fee", payment.upfront_fee)
-		self.revenue += payment.upfront_fee
-		if forward:
-			# forward payment
-			self.forward(payment)
+		free_slots = self.get_free_slots()
+		if len(free_slots) >= len(payment_batch):
+			for i,_ in enumerate(payment_batch):
+				payment = payment_batch[i]
+				chosen_slot = free_slots[i]
+				self.slot_leftovers[chosen_slot] += payment.delay
+				# should we add discarded payments to total?
+				self.total_payments += 1
+				#print("adding incoming upfront fee", payment.upfront_fee)
+				self.revenue += payment.upfront_fee
+				success_so_far = True
+				self.forward(payment)
 		else:
-			# discard payment
-			pass
+			success_so_far = False
+		return success_so_far
 
 	def forward(self, payment):
 		ds_payment = payment.ds_payment
