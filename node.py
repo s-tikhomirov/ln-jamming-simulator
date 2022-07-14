@@ -1,16 +1,19 @@
+import random
+
 class Node:
 
-	def __init__(self, name, fee_policy, num_slots):
+	def __init__(self, name, fee_policy, num_slots, prob_network_fail=0, prob_deliberate_fail=0):
 		self.name = name
 		self.fee_policy = fee_policy
+		# probabilty with which this node fails payments for reasons OTHER THAN "no free slots"
+		self.prob_network_fail = prob_network_fail
+		# probability with which node fails payments deliberately (i.e., jammer-receiver)
+		self.prob_deliberate_fail = prob_deliberate_fail
 		self.slot_leftovers = [0] * num_slots
 		self.reset()
 		
 	def reset(self):
 		self.revenue, self.amount_forwarded, self.total_payments, self.failed_payments = 0, 0, 0, 0
-
-	def set_fee_policy(self, new_fee_policy):
-		self.fee_policy = new_fee_policy
 
 	def get_free_slots(self):
 		return [i for i in range(len(self.slot_leftovers)) if self.slot_leftovers[i] == 0]
@@ -19,34 +22,27 @@ class Node:
 		for i,_ in enumerate(self.slot_leftovers):
 			self.slot_leftovers[i] = max(0, self.slot_leftovers[i] - time_to_next)
 
-	def handle(self, payment_batch):
+	def handle(self, payment):
 		self.total_payments += 1
+		self.revenue += payment.upfront_fee
 		free_slots = self.get_free_slots()
-		if len(free_slots) >= len(payment_batch):
-			for i,_ in enumerate(payment_batch):
-				payment = payment_batch[i]
-				chosen_slot = free_slots[i]
-				self.slot_leftovers[chosen_slot] += payment.delay
-				# should we add discarded payments to total?
-				self.total_payments += 1
-				#print("adding incoming upfront fee", payment.upfront_fee)
-				self.revenue += payment.upfront_fee
+		success_so_far = False
+		if len(free_slots) > 0:
+			chosen_slot = free_slots[0]
+			self.slot_leftovers[chosen_slot] += payment.delay
+			# if nodes deliberately fail payments, this happens here
+			network_fail = random.random() < self.prob_network_fail
+			deliberate_fail = random.random() < self.prob_deliberate_fail
+			if not network_fail and not deliberate_fail:
+				ds_payment = payment.downstream_payment
+				self.revenue -= ds_payment.upfront_fee
+				self.amount_forwarded += ds_payment.amount
+				self.revenue += (payment.success_fee - ds_payment.success_fee)
 				success_so_far = True
-				self.forward(payment)
-		else:
-			success_so_far = False
+		if not success_so_far:
+			self.failed_payments += 1
 		return success_so_far
 
-	def forward(self, payment):
-		ds_payment = payment.ds_payment
-		#print("subreacting downstream upfront fee", ds_payment.upfront_fee)
-		self.revenue -= ds_payment.upfront_fee
-		if ds_payment.success:
-			self.amount_forwarded += ds_payment.amount
-			#print("adding diff between success_fees:", payment.success_fee, ds_payment.success_fee)
-			self.revenue += (payment.success_fee - ds_payment.success_fee)
-		else:
-			self.failed_payments += 1
 	
 	def __str__(self):
 		s = ""
