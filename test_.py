@@ -1,43 +1,16 @@
 from node import Node
 from payment import Payment
 
-# FIXME: adapt to new model - see run.py
-# amount and delay functions are properties of a node
-
-def test_payment():
-
-	def upfront_fee_function(amount):
-		return round(2 + 0.02 * amount)
-
-	def success_fee_function(body):
-		return round(5 + 0.05 * body)
-
-	p0 = Payment(None, upfront_fee_function, success_fee_function, body=100)
-	p1 = Payment(p0, upfront_fee_function, success_fee_function)
-	p2 = Payment(p1, upfront_fee_function, success_fee_function)
-	p3 = Payment(p2, upfront_fee_function, success_fee_function)
-
-	assert(p3.amount == 127)
-	assert(p2.amount == 116)
-	assert(p1.amount == 106)
-	assert(p0.amount == 96)
-
-	assert(p3.upfront_fee == 5)
-	assert(p2.upfront_fee == 4)
-	assert(p1.upfront_fee == 4)
-	assert(p0.upfront_fee == 4)
-
-
 UPFRONT_BASE = 5
-UPFRONT_PROP = 0.02
+UPFRONT_RATE = 0.02
 SUCCESS_BASE = 10
-SUCCESS_PROP = 0.05
+SUCCESS_RATE = 0.05
 
 def success_fee_function(a):
-	return round(SUCCESS_BASE + SUCCESS_PROP * a)
+	return round(SUCCESS_BASE + SUCCESS_RATE * a)
 
 def upfront_fee_function(a):
-	return round(UPFRONT_BASE + UPFRONT_PROP * a)
+	return round(UPFRONT_BASE + UPFRONT_RATE * a)
 
 def time_to_next_function():
 	return 1
@@ -52,7 +25,23 @@ def delay_function():
 	return 0
 
 
-def test_one_hop_payment():
+def test_payment_creation():
+	p0 = Payment(None, upfront_fee_function, success_fee_function, body=100)
+	p1 = Payment(p0, upfront_fee_function, success_fee_function)
+	p2 = Payment(p1, upfront_fee_function, success_fee_function)
+	p3 = Payment(p2, upfront_fee_function, success_fee_function)
+	assert(p3.amount == 139)
+	assert(p2.amount == 123)
+	assert(p1.amount == 108)
+	assert(p0.amount == 93)
+	assert(p3.upfront_fee == 8)
+	assert(p2.upfront_fee == 7)
+	assert(p1.upfront_fee == 7)
+	assert(p0.upfront_fee == 7)
+	
+
+
+def test_multi_hop_payment_success():
 	alice = Node("Alice", num_slots=1, prob_network_fail=0, prob_deliberate_fail=0,
 		success_fee_function=success_fee_function,
 		upfront_fee_function=upfront_fee_function,
@@ -103,5 +92,4 @@ def test_multi_hop_payment_fail():
 	assert(bob.revenue == 0)
 	assert(charlie.revenue == 7)
 	assert(dave.revenue == 0)
-
 

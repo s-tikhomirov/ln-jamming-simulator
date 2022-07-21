@@ -5,7 +5,7 @@ from payment import Payment
 class Node:
 
 	def __init__(self, name, num_slots, prob_network_fail, prob_deliberate_fail,
-		success_fee_function, upfront_fee_function,
+		success_fee_function, upfront_fee_function=lambda a: 0,
 		time_to_next_function=None, payment_amount_function=None, payment_delay_function=None,
 		num_payments_in_batch=1):
 		self.name = name
@@ -41,7 +41,7 @@ class Node:
 
 	def handle(self, payment):
 		#print(payment)
-		print(self.name, "takes upfront fee:", payment.upfront_fee)
+		#print(self.name, "takes upfront fee:", payment.upfront_fee)
 		self.revenue += payment.upfront_fee
 		free_slots = self.get_free_slots()
 		success_so_far = False
@@ -54,28 +54,29 @@ class Node:
 				if ds_payment is not None:
 					assert(payment.upfront_fee >= ds_payment.upfront_fee)
 					assert(payment.success_fee >= ds_payment.success_fee)
-					print(self.name, "pays upfront fee:", ds_payment.upfront_fee)
+					#print(self.name, "pays upfront fee:", ds_payment.upfront_fee)
 					self.revenue -= ds_payment.upfront_fee
-					print(self.name, "'s revenue now is:", self.revenue)
+					#print(self.name, "'s revenue now is:", self.revenue)
 					self.in_flight_revenue += (payment.success_fee - ds_payment.success_fee)
-					print("Payment succeeds so far")
+					#print("Payment succeeds so far")
 				else:
-					print("Payment reached the receiver")
+					#print("Payment reached the receiver")
+					pass
 			else:
-				print("Payment failed")
+				#print("Payment failed")
 				pass
 		return success_so_far
 
 	def finalize(self, success):
-		print("Finalizing for", self.name)
+		#print("Finalizing for", self.name)
 		if success:
-			print("Adding", self.name, "'s in-flight revenue:", self.in_flight_revenue)
+			#print("Adding", self.name, "'s in-flight revenue:", self.in_flight_revenue)
 			self.revenue += self.in_flight_revenue
-			print(self.name, "'s total revenue now is:", self.revenue)
+			#print(self.name, "'s total revenue now is:", self.revenue)
 		self.in_flight_revenue = 0
 
 	def create_payment(self, route):
-		print(self.name, "created a payment")
+		#print(self.name, "created a payment")
 		assert(self == route[0])
 		receiver = route[-1]
 		amount = self.payment_amount_function()
@@ -98,30 +99,32 @@ class Node:
 	def route_payment(self, payment, route):
 		sender = route[0]
 		assert(sender == self)
-		print("\n", sender.name, "sends payment")
+		#print("\n", sender.name, "sends payment")
 		# the sender pays upfront fee in any case
-		print(sender.name, "pays upfront fee:", payment.upfront_fee)
+		#print(sender.name, "pays upfront fee:", payment.upfront_fee)
 		sender.revenue -= payment.upfront_fee
 		# the sender will (maybe) pay success fee later
-		print(sender.name, "may later pay success-case fee:", payment.success_fee)
+		#print(sender.name, "may later pay success-case fee:", payment.success_fee)
 		sender.in_flight_revenue -= payment.success_fee
 		success = not self.will_fail()
 		if not success:
-			print(self.name, "failed the payment")
+			#print(self.name, "failed the payment")
+			pass
 		else:
 			current_payment = payment
 			for node in route[1:]:
-				print(node.name, "handles payment")
+				#print(node.name, "handles payment")
 				success = node.handle(current_payment)
 				if not success:
-					print("Fail at node", node.name)
+					#print("Fail at node", node.name)
 					success = False
 					break
 				current_payment = current_payment.downstream_payment
 		time_to_next = self.time_to_next()
-		print("Time to next", time_to_next)
+		#print("Time to next", time_to_next)
 		for node in route:
 			# FIXME: don't count upfront fee as revenue for receiver?
+			# doesn't matter as long as we're only looking at Router's revenue
 			node.finalize(success)
 			node.update_slot_leftovers(time_to_next)
 		return success, time_to_next

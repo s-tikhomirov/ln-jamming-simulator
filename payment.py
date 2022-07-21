@@ -42,7 +42,9 @@ class Payment:
 			b = round((min_b + max_b) / 2)
 			f = upfront_fee_function(b)
 			a = b + f
-			if abs(a - target_amount) < precision:
+			if abs(a - target_amount) <= precision:
+				# it's not always possible to reach exact target due to rounding
+				# we say that the diff of 1 (assuming precision=1) is good enough
 				break
 			if a < target_amount:
 				min_b = b
