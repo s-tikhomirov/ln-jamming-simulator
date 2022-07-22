@@ -30,6 +30,7 @@ def test_payment_creation():
 	p1 = Payment(p0, upfront_fee_function, success_fee_function)
 	p2 = Payment(p1, upfront_fee_function, success_fee_function)
 	p3 = Payment(p2, upfront_fee_function, success_fee_function)
+	print(p3)
 	assert(p3.amount == 139)
 	assert(p2.amount == 123)
 	assert(p1.amount == 108)
@@ -42,17 +43,17 @@ def test_payment_creation():
 
 
 def test_multi_hop_payment_success():
-	alice = Node("Alice", num_slots=1, prob_network_fail=0, prob_deliberate_fail=0,
+	alice = Node("Alice", num_slots=1, prob_next_channel_fail=0,
 		success_fee_function=success_fee_function,
 		upfront_fee_function=upfront_fee_function,
 		time_to_next_function=time_to_next_function,
 		payment_amount_function=amount_function,
 		payment_delay_function=delay_function)
-	bob = Node("Bob", num_slots=1, prob_network_fail=0, prob_deliberate_fail=0,
+	bob = Node("Bob", num_slots=1, prob_next_channel_fail=0,
 		success_fee_function=success_fee_function,
 		upfront_fee_function=upfront_fee_function,
 		time_to_next_function=time_to_next_function)
-	charlie = Node("Charlie", num_slots=1, prob_network_fail=0, prob_deliberate_fail=0,
+	charlie = Node("Charlie", num_slots=1, prob_next_channel_fail=0,
 		success_fee_function=success_fee_function,
 		upfront_fee_function=upfront_fee_function,
 		time_to_next_function=time_to_next_function)
@@ -65,21 +66,21 @@ def test_multi_hop_payment_success():
 
 
 def test_multi_hop_payment_fail():
-	alice = Node("Alice", num_slots=1, prob_network_fail=0, prob_deliberate_fail=0,
+	alice = Node("Alice", num_slots=1, prob_next_channel_fail=0,
 		success_fee_function=success_fee_function,
 		upfront_fee_function=upfront_fee_function,
 		time_to_next_function=time_to_next_function,
 		payment_amount_function=amount_function,
 		payment_delay_function=delay_function)
-	bob = Node("Bob", num_slots=1, prob_network_fail=0, prob_deliberate_fail=0,
+	bob = Node("Bob", num_slots=1, prob_next_channel_fail=0,
 		success_fee_function=success_fee_function,
 		upfront_fee_function=upfront_fee_function,
 		time_to_next_function=time_to_next_function)
-	charlie = Node("Charlie", num_slots=1, prob_network_fail=0, prob_deliberate_fail=1,
+	charlie = Node("Charlie", num_slots=1, prob_next_channel_fail=0,
 		success_fee_function=success_fee_function,
 		upfront_fee_function=upfront_fee_function,
 		time_to_next_function=time_to_next_function)
-	dave = Node("Dave", num_slots=1, prob_network_fail=0, prob_deliberate_fail=0,
+	dave = Node("Dave", num_slots=1, prob_next_channel_fail=0,
 		success_fee_function=success_fee_function,
 		upfront_fee_function=upfront_fee_function,
 		time_to_next_function=time_to_next_function)

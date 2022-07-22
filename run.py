@@ -51,12 +51,9 @@ EXPECTED_EXTRA_DELAY = 3
 # (aka scale, aka the inverse of rate lambda)
 HONEST_PAYMENT_EVERY_SECONDS = 10
 
-# the probability that a payment randomly fails PER HOP
-# (a coin is flipped at every routing node)
-# however, if we set it only for Router but not HonestReceiver,
-# this probability would reflect the failure probability of the whole route
-# TODO: make the failure probability depend on the amount?
-PROB_NETWORK_FAIL = 0.05
+# the probability that a payment fails at a hop
+# because the _next_ channel can't handle it (e.g., low balance)
+PROB_NEXT_CHANNEL_FAIL = 0.05
 
 
 #### JAMMING PARAMETERS ####
@@ -110,27 +107,22 @@ def jamming_amount():
 	return JAM_AMOUNT
 
 def create_jamming_route():
-	# senders can't fail payments
 	jammer_sender = Node("JammerSender",
 		num_slots=NUM_SLOTS,
-		prob_network_fail=0,
-		prob_deliberate_fail=0,
-		success_fee_function=success_fee_function,
 		time_to_next_function=jamming_time_to_next,
 		payment_amount_function=jamming_amount,
 		payment_delay_function=jamming_delay,
 		num_payments_in_batch=NUM_SLOTS)
-	# router fails payment with network fail rate
 	router = Node("Router",
 		num_slots=NUM_SLOTS,
-		prob_network_fail=PROB_NETWORK_FAIL,
-		prob_deliberate_fail=0,
+		prob_next_channel_fail=PROB_NEXT_CHANNEL_FAIL,
 		success_fee_function=success_fee_function)
-	# jammer-receiver fails payments deliberately
+	# jammer-receiver always deliberately fails payments
+	# equivalently: jammer-receiver acts _as if_ there were
+	# a low-balance channel downstream => fail payment
 	jammer_receiver = Node("Jammer_Receiver",
 		num_slots=NUM_SLOTS,
-		prob_network_fail=0,
-		prob_deliberate_fail=1,
+		prob_next_channel_fail=1,
 		success_fee_function=success_fee_function)
 	route = [jammer_sender, router, jammer_receiver]
 	return route
@@ -138,21 +130,16 @@ def create_jamming_route():
 def create_honest_route():
 	honest_sender = Node("Sender",
 		num_slots=NUM_SLOTS,
-		prob_network_fail=0,
-		prob_deliberate_fail=0,
-		success_fee_function=success_fee_function,
 		time_to_next_function=honest_time_to_next,
 		payment_amount_function=honest_amount,
 		payment_delay_function=honest_delay)
 	router = Node("Router",
 		num_slots=NUM_SLOTS,
-		prob_network_fail=PROB_NETWORK_FAIL,
-		prob_deliberate_fail=0,
+		prob_next_channel_fail=PROB_NEXT_CHANNEL_FAIL,
 		success_fee_function=success_fee_function)
 	honest_receiver = Node("HonestReceiver",
 		num_slots=NUM_SLOTS,
-		prob_network_fail=PROB_NETWORK_FAIL,
-		prob_deliberate_fail=0,
+		prob_next_channel_fail=0,
 		success_fee_function=success_fee_function)
 	route = [honest_sender, router, honest_receiver]
 	return route
@@ -160,19 +147,29 @@ def create_honest_route():
 def run_simulation(route, simulation_duration):
 	elapsed = 0
 	sender = route[0]
+	num_payments, num_failed = 0, 0
 	while elapsed < simulation_duration:
 		payment = sender.create_payment(route)
 		success, time_to_next = sender.route_payment(payment, route)
+		num_payments += 1
+		if not success:
+			num_failed += 1
 		elapsed += time_to_next
+	return num_payments, num_failed
 
 def average_fee_revenue(route, num_simulations, simulation_duration):
-	revenues = []
+	revenues, num_payments_values, num_failed_values = [], [], []
 	for num_simulation in range(num_simulations):
-		run_simulation(route, simulation_duration)
+		num_payments, num_failed = run_simulation(route, simulation_duration)
 		revenues.append(route[1].revenue)
+		num_payments_values.append(num_payments)
+		num_failed_values.append(num_failed)
 		for node in route:
 			node.reset()
-	return round(statistics.mean(revenues))
+	return (statistics.mean(num_payments_values),
+		statistics.mean(num_failed_values),
+		statistics.mean(revenues))
+
 
 def run_simulations(num_simulations, simulation_duration):
 	honest_route = create_honest_route()
@@ -202,24 +199,34 @@ def run_simulations(num_simulations, simulation_duration):
 					return generic_fee_function(a, base=upfront_base, rate=upfront_rate)
 				for node in jamming_route + honest_route:
 					node.upfront_fee_function = upfront_fee_function
-				# jamming revenue is constant ONLY if PROB_NETWORK_FAIL = 0
+				# jamming revenue is constant ONLY if PROB_NEXT_CHANNEL_FAIL = 0
 				# that's why we must average across experiments both for jamming and honest cases
-				jamming_revenue = average_fee_revenue(jamming_route, num_simulations, simulation_duration)
-				honest_average_revenue = average_fee_revenue(honest_route, num_simulations, simulation_duration)
+				random.seed(0)
+				np.random.seed(0)
+				num_p_j, num_f_j, jamming_revenue = average_fee_revenue(jamming_route, num_simulations, simulation_duration)
+				num_p_h, num_f_h, honest_average_revenue = average_fee_revenue(honest_route, num_simulations, simulation_duration)
+				print("\nOn average per simulation (honest):", 
+					num_p_h, "payments,",
+					num_f_h, "of them failed." )
+				print("On average per simulation (jamming):", 
+					num_p_j, "payments,",
+					num_f_j, "of them failed." )
+				print("honest_average_revenue, jamming_revenue:	", 
+					honest_average_revenue, jamming_revenue)
 				break_even_reached = honest_average_revenue < jamming_revenue
 				writer.writerow([
 					upfront_base_coeff, 
 					upfront_rate_coeff,
 					np.format_float_positional(upfront_base),
 					np.format_float_positional(upfront_rate),
-					round(honest_average_revenue), 
-					round(jamming_revenue),
-					break_even_reached])
-				print("honest_average_revenue, jamming_revenue:	", 
-					honest_average_revenue, jamming_revenue)
+					honest_average_revenue,
+					jamming_revenue,
+					break_even_reached
+					])
 
 
-COMMON_RANGE = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10]
+#COMMON_RANGE = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10]
+COMMON_RANGE = [0.01, 0.1, 1]
 
 # upfront base fee it this many times higher than success-case base fee
 UPFRONT_BASE_COEFF_RANGE = COMMON_RANGE
