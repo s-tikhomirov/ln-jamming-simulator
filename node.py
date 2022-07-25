@@ -4,14 +4,17 @@ from payment import Payment
 
 class Node:
 
-	def __init__(self, name, num_slots=1, prob_next_channel_fail=0,
+	def __init__(self, name, num_slots=1,
+		prob_next_channel_low_balance=0,
+		prob_deliberately_fail=0,
 		success_fee_function=lambda a: 0, upfront_fee_function=lambda a: 0,
 		time_to_next_function=None, payment_amount_function=None, payment_delay_function=None,
 		num_payments_in_batch=1):
 		self.name = name
 		self.slot_leftovers = [0] * num_slots
 		# probabilty with which this node fails payments for reasons OTHER THAN "no free slots"
-		self.prob_next_channel_fail = prob_next_channel_fail
+		self.prob_next_channel_low_balance = prob_next_channel_low_balance
+		self.prob_deliberately_fail = prob_deliberately_fail
 		self.success_fee_function = success_fee_function
 		self.upfront_fee_function = upfront_fee_function
 		# time_to_next_function is only defined for the sender
@@ -25,50 +28,24 @@ class Node:
 		self.revenue, self.in_flight_revenue = 0, 0
 		self.batch_so_far = 0
 
-	def get_free_slots(self):
-		return [i for i in range(len(self.slot_leftovers)) if self.slot_leftovers[i] == 0]
-
 	def update_slot_leftovers(self, time_to_next):
 		for i,_ in enumerate(self.slot_leftovers):
 			self.slot_leftovers[i] = max(0, self.slot_leftovers[i] - time_to_next)
 
-	def next_channel_will_fail(self):
-		network_fail = random.random() < self.prob_next_channel_fail
+	def next_channel_low_balance(self):
+		network_fail = random.random() < self.prob_next_channel_low_balance
 		return network_fail
 
 	def chosen_free_slot(self):
-		free_slots = self.get_free_slots()
+		free_slots = [i for i in range(len(self.slot_leftovers)) if self.slot_leftovers[i] == 0]
 		if len(free_slots) > 0:
 			chosen_slot = free_slots[0]
 			return chosen_slot
 		return None
 
-	def handle(self, payment):
-		#print(payment)
-		success_so_far = False
-		chosen_slot = self.chosen_free_slot()
-		do_handle = chosen_slot is not None and not self.next_channel_will_fail()
-		if do_handle:
-			print(self.name, "takes upfront fee:", payment.upfront_fee)
-			self.revenue += payment.upfront_fee
-			self.slot_leftovers[chosen_slot] += payment.delay
-			success_so_far = True
-			ds_payment = payment.downstream_payment
-			if ds_payment is not None:
-				assert(payment.upfront_fee >= ds_payment.upfront_fee)
-				assert(payment.success_fee >= ds_payment.success_fee)
-				print(self.name, "pays upfront fee:", ds_payment.upfront_fee)
-				self.revenue -= ds_payment.upfront_fee
-				print(self.name, "'s revenue now is:", self.revenue)
-				self.in_flight_revenue += (payment.success_fee - ds_payment.success_fee)
-				print("Payment succeeds so far")
-			else:
-				print("Payment reached the receiver")
-				pass
-		else:
-			print("Payment failed")
-			pass
-		return success_so_far
+	def has_no_slots(self):
+		# we use this to check if the _next_ channel has slots before forwarding
+		return not (0 in self.slot_leftovers)
 
 	def finalize(self, success):
 		#print("Finalizing for", self.name)
@@ -99,34 +76,77 @@ class Node:
 			time_to_next = 0
 		return time_to_next
 
-	def route_payment(self, payment, route):
+	def route_payment(self, outermost_payment, route):
+		# sanity checks
 		sender = route[0]
 		assert(sender == self)
-		print("\n", sender.name, "sends payment:")
-		print(payment)
-		success = not self.next_channel_will_fail()
-		if not success:
-			print(self.name, "failed the payment")
-			if self.name == "Sender":
-				print("sender failed the payment")
-				exit()
-			pass
-		else:
-			# the sender pays upfront fee in any case
-			print(sender.name, "pays upfront fee:", payment.upfront_fee)
-			sender.revenue -= payment.upfront_fee
-			# the sender will (maybe) pay success fee later
-			#print(sender.name, "may later pay success-case fee:", payment.success_fee)
-			sender.in_flight_revenue -= payment.success_fee
-			current_payment = payment
-			for node in route[1:]:
-				print(node.name, "handles payment")
-				success = node.handle(current_payment)
-				if not success:
-					print("Fail at node", node.name)
-					success = False
-					break
-				current_payment = current_payment.downstream_payment
+		assert(len(route) >= 2)
+
+		payment = outermost_payment
+		for i in range(len(route)):
+
+			node = route[i]
+
+			print()
+			print(node.name, "considers payment:")
+			print(payment)
+
+			# if this node deliberately fails, no further checks happen
+			deliberately_fail = random.random() < node.prob_deliberately_fail
+			print(node.name, "will deliberately fail the payment?", deliberately_fail)
+			if deliberately_fail:
+				print(node.name, "deliberately failed the payment")
+				success = False
+				break
+
+			# if this is the receiver, payment succeeds
+			node_is_last = (i == len(route) - 1)
+			if node_is_last:
+				# deliberate failuer must have been checked earlier
+				print("Payment reached the receiver:", node.name)
+				success = True
+				break
+
+			# this node is not the receiver and intends to forward
+			print(node.name, "checks next balance")
+			low_balance = node.next_channel_low_balance()
+			print("Next channel has low balance?", low_balance)
+
+			next_node = route[i+1]
+			print("Next node is", next_node.name)
+
+			print(node.name, "checks next channel's slots")
+			no_slots = next_node.has_no_slots()
+			print("Next channel has no slots?", no_slots)
+
+			success = not low_balance and not no_slots
+
+			if not success:
+				print(node.name, "failed the payment")
+				break
+			
+			# actually start forwarding payment
+			print("\n", node.name, "forwards the payment")
+
+			# upfront fee
+			print(node.name, "pays upfront fee:", payment.upfront_fee)
+			node.revenue -= payment.upfront_fee
+			print(next_node.name, "receives upfront fee:", payment.upfront_fee)
+			next_node.revenue += payment.upfront_fee
+
+			# block a slot in the previous channel
+			print("Occupying a slot for payment delay:", payment.delay)
+			chosen_slot = node.chosen_free_slot()
+			node.slot_leftovers[chosen_slot] += payment.delay
+
+			# success fee to in-flight revenue
+			print(node.name, "may later pay success fee:", payment.success_fee)
+			node.in_flight_revenue -= payment.success_fee
+			print(next_node.name, "may later receive success fee:", payment.success_fee)
+			next_node.in_flight_revenue += payment.success_fee
+
+			payment = payment.downstream_payment
+						
 		time_to_next = self.time_to_next()
 		print("Time to next", time_to_next)
 		print()
@@ -135,7 +155,13 @@ class Node:
 			# doesn't matter as long as we're only looking at Router's revenue
 			node.finalize(success)
 			node.update_slot_leftovers(time_to_next)
+
+		if success:
+			print("Payment complete!")
+			pass
+
 		return success, time_to_next
+
 	
 	def __str__(self):
 		s = ""
