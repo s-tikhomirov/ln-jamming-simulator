@@ -1,11 +1,13 @@
 import random
 
 from payment import Payment
+from params import ProtocolParams, PaymentFlowParams
 
 class Node:
 
-	def __init__(self, name, num_slots=1,
-		prob_next_channel_low_balance=0,
+	def __init__(self, name,
+		num_slots=ProtocolParams["NUM_SLOTS"],
+		prob_next_channel_low_balance=PaymentFlowParams["PROB_NEXT_CHANNEL_LOW_BALANCE"],
 		prob_deliberately_fail=0,
 		success_fee_function=lambda a: 0,
 		upfront_fee_function=lambda a: 0,

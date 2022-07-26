@@ -1,3 +1,5 @@
+from params import ProtocolParams
+
 '''
 	A Payment encodes the channel state update between two nodes.
 '''
@@ -61,9 +63,7 @@ class Payment:
 		# amount = body + success-case fee (by definition!)
 		# amount is how much is encoded in the HTLC
 		self.amount = self.body + self.success_fee
-		# FIXME: re-structure this after moving config values into separate files
-		import run
-		assert(self.amount >= run.DUST_LIMIT), (self.amount, run.DUST_LIMIT)
+		assert(self.amount >= ProtocolParams["DUST_LIMIT"]), (self.amount, DUST_LIMIT)
 		# upfront-fee is calculated based on the _amount_
 		self.upfront_fee = upfront_fee_function(self.amount)
 		
