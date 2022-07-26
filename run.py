@@ -17,7 +17,7 @@ M = K * K
 
 #### PAYMENT FLOW PROPERTIES ####
 
-# We assume amounts follow log-normal distribution
+# Amounts follow log-normal distribution
 # Cf. https://swiftinstitute.org/wp-content/uploads/2012/10/The-Statistics-of-Payments_v15.pdf
 # mu is the natural log of the mean amount (we assume 50k sats ~ $10 at $20k per BTC)
 # sigma is the measure of how spread out the distribution is
@@ -28,6 +28,9 @@ AMOUNT_SIGMA = 0.7
 
 #### PROTOCOL PROPERTIES ####
 
+# all payment amounts (on every layer) must be higher than dust limie
+# (otherwise HTLCs are trimmed)
+# jams are a just bit higher than dust limit
 # https://github.com/lightning/bolts/blob/master/03-transactions.md#dust-limits
 DUST_LIMIT = 354
 
@@ -53,12 +56,12 @@ HONEST_PAYMENT_EVERY_SECONDS = 10
 
 # the probability that a payment fails at a hop
 # because the _next_ channel can't handle it (e.g., low balance)
-PROB_NEXT_CHANNEL_LOW_BALANCE = 0.05
+PROB_NEXT_CHANNEL_LOW_BALANCE = 0
 
 
 #### JAMMING PARAMETERS ####
 
-# nodes may set stricter dust limit
+# nodes may set stricter dust limits
 JAM_AMOUNT = DUST_LIMIT
 
 JAM_DELAY = MIN_DELAY + 2 * EXPECTED_EXTRA_DELAY
@@ -85,7 +88,6 @@ def generic_fee_function(a, base, rate):
 	return base + rate * a
 
 def success_fee_function(a):
-	# we don't round to satoshis to avoid rounding to zero
 	return generic_fee_function(a, SUCCESS_BASE, SUCCESS_RATE)
 
 def honest_time_to_next():
@@ -112,14 +114,13 @@ def create_jamming_route():
 		time_to_next_function=jamming_time_to_next,
 		payment_amount_function=jamming_amount,
 		payment_delay_function=jamming_delay,
-		num_payments_in_batch=NUM_SLOTS)
+		num_payments_in_batch=NUM_SLOTS,
+		subtract_upfront_fee_from_last_hop_amount=False)
 	router = Node("Router",
 		num_slots=NUM_SLOTS,
 		prob_next_channel_low_balance=PROB_NEXT_CHANNEL_LOW_BALANCE,
 		success_fee_function=success_fee_function)
 	# jammer-receiver always deliberately fails payments
-	# equivalently: jammer-receiver acts _as if_ there were
-	# a low-balance channel downstream => fail payment
 	jammer_receiver = Node("Jammer_Receiver",
 		num_slots=NUM_SLOTS,
 		prob_deliberately_fail=1,
@@ -156,18 +157,22 @@ def run_simulation(route, simulation_duration):
 		elapsed += time_to_next
 	return num_payments, num_failed
 
-def average_fee_revenue(route, num_simulations, simulation_duration):
-	revenues, num_payments_values, num_failed_values = [], [], []
+def average_result_values(route, num_simulations, simulation_duration):
+	sender_revenues, router_revenues, num_payments_values, num_failed_values = [], [], [], []
 	for num_simulation in range(num_simulations):
 		num_payments, num_failed = run_simulation(route, simulation_duration)
-		revenues.append(route[1].revenue)
+		sender_revenues.append(route[0].revenue)
+		router_revenues.append(route[1].revenue)
 		num_payments_values.append(num_payments)
 		num_failed_values.append(num_failed)
 		for node in route:
 			node.reset()
-	return (statistics.mean(num_payments_values),
-		statistics.mean(num_failed_values),
-		statistics.mean(revenues))
+	return (
+		statistics.mean(sender_revenues),
+		statistics.mean(router_revenues),
+		statistics.mean(num_payments_values),
+		statistics.mean(num_failed_values)
+		)
 
 
 def run_simulations(num_simulations, simulation_duration):
@@ -176,14 +181,24 @@ def run_simulations(num_simulations, simulation_duration):
 	timestamp = str(int(time.time()))
 	with open("results/" + timestamp + "-revenues" +".csv", "w", newline="") as f:
 		writer = csv.writer(f, delimiter = ",", quotechar="'", quoting=csv.QUOTE_MINIMAL)
-		writer.writerow(["num_simulations: " + str(num_simulations)])
-		writer.writerow(["simulation_duration: " + str(simulation_duration)])
-		writer.writerow(["success_base: " + str(SUCCESS_BASE)])
-		writer.writerow(["success_rate: " + str(SUCCESS_RATE)])
+		writer.writerow(["num_simulations", str(num_simulations)])
+		writer.writerow(["simulation_duration", str(simulation_duration)])
+		writer.writerow(["success_base", str(SUCCESS_BASE)])
+		writer.writerow(["success_rate", str(SUCCESS_RATE)])
+		writer.writerow(["HONEST_PAYMENT_EVERY_SECONDS", str(HONEST_PAYMENT_EVERY_SECONDS)])
+		writer.writerow(["JAM_DELAY", str(JAM_DELAY)])
+		writer.writerow(["JAM_AMOUNT", str(JAM_AMOUNT)])
+		writer.writerow(["NUM_SLOTS", str(NUM_SLOTS)])
+		writer.writerow(["PROB_NEXT_CHANNEL_LOW_BALANCE", PROB_NEXT_CHANNEL_LOW_BALANCE])
 		writer.writerow("")
-		writer.writerow(["upfront_base_coeff", "upfront_rate_coeff", 
+		writer.writerow([
+			"upfront_base_coeff", "upfront_rate_coeff",
 			"upfront_base", "upfront_rate",
-			"normal_revenue", "jamming_revenue", "jamming_revenue_is_higher"])
+			"num_payments_honest", "num_failed_honest", "share_failed",
+			"num_jams",
+			"sender_revenue_honest", "sender_revenue_jamming",
+			"router_revenue_honest", "router_revenue_jamming",
+			"router_revenue_jamming_is_higher_than_honest"])
 		num_parameter_sets = len(UPFRONT_BASE_COEFF_RANGE) * len(UPFRONT_RATE_COEFF_RANGE)
 		i = 1
 		for upfront_base_coeff in UPFRONT_BASE_COEFF_RANGE:
@@ -202,30 +217,42 @@ def run_simulations(num_simulations, simulation_duration):
 				# that's why we must average across experiments both for jamming and honest cases
 				random.seed(0)
 				np.random.seed(0)
-				num_p_j, num_f_j, jamming_revenue = average_fee_revenue(jamming_route, num_simulations, simulation_duration)
-				num_p_h, num_f_h, honest_average_revenue = average_fee_revenue(honest_route, num_simulations, simulation_duration)
+				sender_revenue_j, router_revenue_j, num_p_j, num_f_j = average_result_values(jamming_route, num_simulations, simulation_duration)
+				assert(num_p_j == num_f_j)
+				sender_revenue_h, router_revenue_h, num_p_h, num_f_h = average_result_values(honest_route, num_simulations, simulation_duration)
+				share_failed_h = num_f_h/num_p_h
 				print("\nOn average per simulation (honest):", 
 					num_p_h, "payments,",
-					num_f_h, "of them failed." )
+					num_f_h, "(", round(num_f_h/num_p_h,2), ") of them failed.")
+				print("Per-hop low balance probabiliy is", PROB_NEXT_CHANNEL_LOW_BALANCE)
 				print("On average per simulation (jamming):", 
 					num_p_j, "payments,",
-					num_f_j, "of them failed." )
-				print("honest_average_revenue, jamming_revenue:	", 
-					honest_average_revenue, jamming_revenue)
-				break_even_reached = honest_average_revenue < jamming_revenue
+					num_f_j, "of them failed.")
+				print("Sender's revenue (honest, jamming):	", sender_revenue_h, sender_revenue_j)
+				print("Router's revenue (honest, jamming):	", router_revenue_h, router_revenue_j)
+				router_revenue_jamming_is_higher_than_honest = router_revenue_j > router_revenue_h
 				writer.writerow([
 					upfront_base_coeff, 
 					upfront_rate_coeff,
 					np.format_float_positional(upfront_base),
-					np.format_float_positional(upfront_rate),
-					honest_average_revenue,
-					jamming_revenue,
-					break_even_reached
+					# due to rounding, upfront_rate may take the form like
+					# 0.0000005000000000000001
+					# let's round it to 12 decimal points
+					np.format_float_positional(round(upfront_rate,12)),
+					num_p_h,
+					num_f_h,
+					share_failed_h,
+					num_p_j,
+					sender_revenue_h,
+					sender_revenue_j,
+					router_revenue_h,
+					router_revenue_j,
+					router_revenue_jamming_is_higher_than_honest
 					])
 
 
 #COMMON_RANGE = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10]
-COMMON_RANGE = [0.1, 1, 10]
+COMMON_RANGE = [0.01, 0.1, 1]
 
 # upfront base fee it this many times higher than success-case base fee
 UPFRONT_BASE_COEFF_RANGE = COMMON_RANGE
