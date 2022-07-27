@@ -86,21 +86,21 @@ class Node:
 		self.reset()
 		
 	@staticmethod
-	def body_for_amount(target_amount, upfront_fee_function, allowed_overpay=1):
+	def body_for_amount(target_amount, upfront_fee_function, precision=1, max_steps=50):
 		'''
 			Given target_amount and fee function, find amount such that:
 			amount + fee(amount) ~ target_amount
 		'''
-		target_amount_max = target_amount + allowed_overpay
-		min_body, max_body = 0, target_amount_max
+		min_body, max_body, num_step = 0, target_amount, 0
 		while True:
+			num_step += 1
 			body = round((min_body + max_body) / 2)
 			fee = upfront_fee_function(body)
 			amount = body + fee
 			print(amount, body, fee)
-			if target_amount <= amount < target_amount_max:
+			if abs(target_amount - amount) < precision or num_step > max_steps:
 				break
-			elif amount < target_amount:
+			if amount < target_amount:
 				min_body = body
 			else:
 				max_body = body
