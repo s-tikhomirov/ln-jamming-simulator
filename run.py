@@ -2,10 +2,10 @@
 
 import argparse
 import csv
+import numpy as np
+import random
 import statistics
 import time
-import random
-import numpy as np
 
 from numpy.random import exponential, lognormal
 
@@ -58,9 +58,7 @@ jamming_route = [jammer_sender, router, jammer_receiver]
 
 
 def run_simulation(route, simulation_duration):
-	elapsed = 0
-	sender = route[0]
-	num_payments, num_failed = 0, 0
+	sender, elapsed, num_payments, num_failed = route[0], 0, 0, 0
 	while elapsed < simulation_duration:
 		payment = sender.create_payment(route)
 		success, time_to_next = sender.route_payment(payment, route)
@@ -71,11 +69,13 @@ def run_simulation(route, simulation_duration):
 	return num_payments, num_failed
 
 def average_result_values(route, num_simulations, simulation_duration):
-	sender_revenues, router_revenues, num_payments_values, num_failed_values = [], [], [], []
+	sender_revenues, router_revenues, receiver_revenues, num_payments_values, num_failed_values = [], [], [], [], []
 	for num_simulation in range(num_simulations):
+		print("Simulation", num_simulation + 1, "of", num_simulations)
 		num_payments, num_failed = run_simulation(route, simulation_duration)
 		sender_revenues.append(route[0].revenue)
 		router_revenues.append(route[1].revenue)
+		receiver_revenues.append(route[2].revenue)
 		num_payments_values.append(num_payments)
 		num_failed_values.append(num_failed)
 		for node in route:
@@ -83,6 +83,7 @@ def average_result_values(route, num_simulations, simulation_duration):
 	return (
 		statistics.mean(sender_revenues),
 		statistics.mean(router_revenues),
+		statistics.mean(receiver_revenues),
 		statistics.mean(num_payments_values),
 		statistics.mean(num_failed_values)
 		)
@@ -104,17 +105,16 @@ def run_simulations(num_simulations, simulation_duration):
 			"upfront_base", "upfront_rate",
 			"num_payments_honest", "num_failed_honest", "share_failed",
 			"num_jams",
-			"sender_revenue_honest", "sender_revenue_jamming",
-			"router_revenue_honest", "router_revenue_jamming",
-			"router_revenue_jamming_is_higher_than_honest"])
+			"h_sender_revenue", "j_sender_revenue",
+			"h_router_revenue", "j_router_revenue",
+			"h_receiver_revenue", "j_receiver_revenue",
+			"j_attack_cost"])
 		num_parameter_sets = len(UPFRONT_BASE_COEFF_RANGE) * len(UPFRONT_RATE_COEFF_RANGE)
 		i = 1
 		for upfront_base_coeff in UPFRONT_BASE_COEFF_RANGE:
 			for upfront_rate_coeff in UPFRONT_RATE_COEFF_RANGE:
 				print("\nParameter combination", i ,"of", num_parameter_sets)
 				i += 1
-				print("upfront_base_coeff, upfront_rate_coeff:		",
-					upfront_base_coeff, upfront_rate_coeff)
 				upfront_base = upfront_base_coeff * FeeParams["SUCCESS_BASE"]
 				upfront_rate = upfront_rate_coeff * FeeParams["SUCCESS_RATE"]
 				def upfront_fee_function(a):
@@ -123,9 +123,10 @@ def run_simulations(num_simulations, simulation_duration):
 					node.upfront_fee_function = upfront_fee_function
 				# jamming revenue is constant ONLY if PROB_NEXT_CHANNEL_LOW_BALANCE = 0
 				# that's why we must average across experiments both for jamming and honest cases
-				sender_revenue_j, router_revenue_j, num_p_j, num_f_j = average_result_values(jamming_route, num_simulations, simulation_duration)
+				sender_revenue_j, router_revenue_j, receiver_revenue_j, num_p_j, num_f_j = average_result_values(jamming_route, num_simulations, simulation_duration)
 				assert(num_p_j == num_f_j)
-				sender_revenue_h, router_revenue_h, num_p_h, num_f_h = average_result_values(honest_route, num_simulations, simulation_duration)
+				attack_cost_j = sender_revenue_j + receiver_revenue_j
+				sender_revenue_h, router_revenue_h, receiver_revenue_h, num_p_h, num_f_h = average_result_values(honest_route, num_simulations, simulation_duration)
 				share_failed_h = num_f_h/num_p_h
 				print("\nOn average per simulation (honest):", 
 					num_p_h, "payments,",
@@ -135,7 +136,7 @@ def run_simulations(num_simulations, simulation_duration):
 					num_f_j, "of them failed.")
 				print("Sender's revenue (honest, jamming):	", sender_revenue_h, sender_revenue_j)
 				print("Router's revenue (honest, jamming):	", router_revenue_h, router_revenue_j)
-				router_revenue_jamming_is_higher_than_honest = router_revenue_j > router_revenue_h
+				print("Receiver's revenue (honest, jamming):	", receiver_revenue_h, receiver_revenue_j)
 				writer.writerow([
 					upfront_base_coeff, 
 					upfront_rate_coeff,
@@ -152,12 +153,13 @@ def run_simulations(num_simulations, simulation_duration):
 					sender_revenue_j,
 					router_revenue_h,
 					router_revenue_j,
-					router_revenue_jamming_is_higher_than_honest
+					receiver_revenue_h,
+					receiver_revenue_j,
+					attack_cost_j
 					])
 
 
-#COMMON_RANGE = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2]
-COMMON_RANGE = [0.01, 0.1, 1]
+COMMON_RANGE = [0.01, 0.1, 1, 10, 100]
 
 # upfront base fee it this many times higher than success-case base fee
 UPFRONT_BASE_COEFF_RANGE = COMMON_RANGE
@@ -175,10 +177,16 @@ def main():
 	args = parser.parse_args()
 
 	if args.seed is not None:
+		print("Initializing randomness seed:", args.seed)
 		random.seed(args.seed)
 		np.random.seed(args.seed)
 
+	start_time = time.time()
 	run_simulations(args.num_simulations, args.simulation_duration)
+	end_time = time.time()
+	running_time = end_time - start_time
+
+	print("\nRunning time (min):", round(running_time / 60, 1))
 
 
 if __name__ == "__main__":

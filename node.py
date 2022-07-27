@@ -1,4 +1,5 @@
 import random
+import numpy as np
 
 from payment import Payment
 from params import ProtocolParams, PaymentFlowParams
@@ -79,7 +80,7 @@ class Node:
 					Assert that payment amount is always higher than the dust limit.
 		"""
 		self.name = name
-		self.slot_leftovers = [0] * num_slots
+		self.slot_leftovers = np.array([0] * num_slots)
 		self.prob_next_channel_low_balance = prob_next_channel_low_balance
 		self.prob_deliberately_fail = prob_deliberately_fail
 		self.success_fee_function = success_fee_function
@@ -104,7 +105,6 @@ class Node:
 			body = round((min_body + max_body) / 2)
 			fee = upfront_fee_function(body)
 			amount = body + fee
-			#print(amount, body, fee)
 			if abs(target_amount - amount) < precision or num_step > max_steps:
 				break
 			if amount < target_amount:
@@ -115,9 +115,10 @@ class Node:
 
 	def reset(self):
 		"""
-			Reset the current revenue, in-flight revenue, and batch progression.
+			Reset the current revenue, in-flight revenue, slot leftovers, and batch progression.
 		"""
 		self.revenue, self.in_flight_revenue = 0, 0
+		self.slot_leftovers.fill(0)
 		self.batch_so_far = 0
 
 	def update_slot_leftovers(self, time_to_next):
@@ -125,8 +126,8 @@ class Node:
 			Move simulated time to the time the next payment comes.
 			Slots that are done with the previous payment get assigned leftover = 0 (free).
 		"""
-		for i,_ in enumerate(self.slot_leftovers):
-			self.slot_leftovers[i] = max(0, self.slot_leftovers[i] - time_to_next)
+		self.slot_leftovers = self.slot_leftovers - time_to_next
+		self.slot_leftovers = np.where(self.slot_leftovers < 0, 0, self.slot_leftovers)
 
 	def next_channel_low_balance(self):
 		"""
@@ -142,16 +143,16 @@ class Node:
 		"""
 		return [i for i in range(len(self.slot_leftovers)) if self.slot_leftovers[i] == 0]
 
-	def finalize(self, success):
+	def finalize_in_flight_revenue(self, success):
 		"""
 			If the payment succeeded, add in-flight revenue (i.e., success-case fees)
 			to the total revenue of all nodes on the route.
 			If the payment failed, nullify in-flight revenue.
 		"""
 		if success:
-			print(self.name, "gets the success-fee difference:", self.in_flight_revenue)
+			#print(self.name, "gets the success-fee difference:", self.in_flight_revenue)
 			self.revenue += self.in_flight_revenue
-			print(self.name, "'s total revenue now is:", self.revenue)
+			#print(self.name, "'s total revenue now is:", self.revenue)
 		self.in_flight_revenue = 0
 
 	def create_payment(self, route):
@@ -223,16 +224,15 @@ class Node:
 		for i in range(len(route)):
 			node = route[i]
 
-			print()
-			print(node.name, "considers payment:")
-			print(payment)
+			#print()
+			#print(node.name, "considers payment:")
+			#print(payment)
 
 			# decide whether this node deliberately fails the payment
 			# if it does, no further checks are necessary
 			deliberately_fail = random.random() < node.prob_deliberately_fail
-			#print(node.name, "will deliberately fail the payment?", deliberately_fail)
 			if deliberately_fail:
-				print(node.name, "deliberately fails the payment")
+				#print(node.name, "deliberately fails the payment")
 				success = False
 				break
 
@@ -242,7 +242,7 @@ class Node:
 			# if it were the jammer-receiver, fail would have happened earlier
 			node_is_receiver = (i == len(route) - 1)
 			if node_is_receiver:
-				print("Payment reaches the receiver:", node.name)
+				#print("Payment reaches", node.name)
 				# we nullify receiver's revenue because its upfront fee
 				# was excluded from final amount when creating the payment
 				node.revenue = 0
@@ -253,52 +253,52 @@ class Node:
 			# check if the next balance is sufficient
 			#print(node.name, "checks next balance")
 			low_balance = node.next_channel_low_balance()
-			print("Next channel has low balance?", low_balance)
+			#print("Next channel has low balance?", low_balance)
 
 			# consider the next node (it exists because node is not the receiver)	
 			next_node = route[i+1]
-			print("Next node is", next_node.name)
+			#print("Next node is", next_node.name)
 			# check if the _next_ node (i.e., channel) has free slots
-			print(node.name, "checks next channel's slots")
+			#print(node.name, "checks next channel's slots")
 			no_slots = len(next_node.free_slot_indexes()) == 0
-			print("Next channel has no slots?", no_slots)
+			#print("Next channel has no slots?", no_slots)
 
 			if low_balance or no_slots:
-				print(node.name, "fails the payment")
+				#print(node.name, "fails the payment")
 				success = False
 				break
 			
 			# actually start forwarding payment
-			print("\n", node.name, "forwards the payment")
+			#print("\n", node.name, "forwards the payment")
 
 			# account for upfront fee
-			print(node.name, "pays upfront fee:", payment.upfront_fee)
+			#print(node.name, "pays upfront fee:", payment.upfront_fee)
 			node.revenue -= payment.upfront_fee
-			print(next_node.name, "receives upfront fee:", payment.upfront_fee)
+			#print(next_node.name, "receives upfront fee:", payment.upfront_fee)
 			next_node.revenue += payment.upfront_fee
 
 			# block a slot in the current ("previous") channel
-			print("Occupying a slot for payment delay:", payment.delay)
+			#print("Occupying a slot for payment delay:", payment.delay)
 			chosen_slot = node.free_slot_indexes()[0]
 			node.slot_leftovers[chosen_slot] += payment.delay
 
 			# add success fee to in-flight revenue
-			print(node.name, "may later pay success fee:", payment.success_fee)
+			#print(node.name, "may later pay success fee:", payment.success_fee)
 			node.in_flight_revenue -= payment.success_fee
-			print(next_node.name, "may later receive success fee:", payment.success_fee)
+			#print(next_node.name, "may later receive success fee:", payment.success_fee)
 			next_node.in_flight_revenue += payment.success_fee
 
 			payment = payment.downstream_payment
 						
 		time_to_next = self.time_to_next()
-		print("Time to next", time_to_next)
-		print()
+		#print("Time to next", time_to_next)
+		#print()
 		for node in route:
-			node.finalize(success)
+			node.finalize_in_flight_revenue(success)
 			node.update_slot_leftovers(time_to_next)
 
 		if success:
-			print("Payment complete!")
+			#print("Payment complete!")
 			pass
 
 		return success, time_to_next
