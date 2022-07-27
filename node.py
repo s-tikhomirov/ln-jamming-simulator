@@ -5,17 +5,20 @@ from params import ProtocolParams, PaymentFlowParams
 
 class Node:
 
-	def __init__(self, name,
+	def __init__(self,
+		name,
 		num_slots=ProtocolParams["NUM_SLOTS"],
 		prob_next_channel_low_balance=PaymentFlowParams["PROB_NEXT_CHANNEL_LOW_BALANCE"],
 		prob_deliberately_fail=0,
-		success_fee_function=lambda a: 0,
-		upfront_fee_function=lambda a: 0,
-		time_to_next_function=None,
+		success_fee_function=lambda : 0,
+		upfront_fee_function=lambda : 0,
+		time_to_next_function=lambda : 1,
 		payment_amount_function=None,
 		payment_delay_function=None,
 		num_payments_in_batch=1,
-		subtract_upfront_fee_from_last_hop_amount=True):
+		subtract_upfront_fee_from_last_hop_amount=True,
+		enforce_dust_limit=True
+		):
 		"""
 			A class to represent a node in the network.
 
@@ -71,6 +74,9 @@ class Node:
 					Whether the upfront fee on the last hop is accounted for at payment creation.
 					It should't be counted for honest payments, but should be for jams.
 					(Jams' amounts must be above dust limit _excluding_ upfront fee.)
+
+				enforce_dust_limit
+					Assert that payment amount is always higher than the dust limit.
 		"""
 		self.name = name
 		self.slot_leftovers = [0] * num_slots
@@ -83,6 +89,7 @@ class Node:
 		self.payment_delay_function = payment_delay_function
 		self.num_payments_in_batch = num_payments_in_batch
 		self.subtract_upfront_fee_from_last_hop_amount = subtract_upfront_fee_from_last_hop_amount
+		self.enforce_dust_limit = enforce_dust_limit
 		self.reset()
 		
 	@staticmethod
@@ -97,7 +104,7 @@ class Node:
 			body = round((min_body + max_body) / 2)
 			fee = upfront_fee_function(body)
 			amount = body + fee
-			print(amount, body, fee)
+			#print(amount, body, fee)
 			if abs(target_amount - amount) < precision or num_step > max_steps:
 				break
 			if amount < target_amount:
@@ -155,16 +162,20 @@ class Node:
 		receiver = route[-1]
 		# jammers add upfront fees on top of last hop amount
 		# to ensure HTLC isn't lower than dust limit
-		receiver_gets = self.payment_amount_function()
+		receiver_amount = self.payment_amount_function()
 		# honest senders decrease the amount to account for the fact that
 		# the receiver also gets the upfront fee
 		if self.subtract_upfront_fee_from_last_hop_amount:
-			receiver_gets = self.body_for_amount(receiver_gets, receiver.upfront_fee_function)
+			receiver_amount = self.body_for_amount(receiver_amount, receiver.upfront_fee_function)
 		delay = self.payment_delay_function()
 		p = Payment(None, receiver.upfront_fee_function, receiver.success_fee_function, 
-			delay=delay, receiver_gets=receiver_gets)
+			delay=delay, receiver_amount=receiver_amount)
+		if self.enforce_dust_limit:
+			assert(p.amount >= ProtocolParams["DUST_LIMIT"]), (p.amount, ProtocolParams["DUST_LIMIT"])
 		for node in reversed(route[:-2]):
 			p = Payment(p, node.upfront_fee_function, receiver.success_fee_function)
+			if self.enforce_dust_limit:
+				assert(p.amount >= ProtocolParams["DUST_LIMIT"]), (p.amount, ProtocolParams["DUST_LIMIT"])
 		return p
 
 	def time_to_next(self):

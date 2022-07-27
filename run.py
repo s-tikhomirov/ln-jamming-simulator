@@ -123,8 +123,6 @@ def run_simulations(num_simulations, simulation_duration):
 					node.upfront_fee_function = upfront_fee_function
 				# jamming revenue is constant ONLY if PROB_NEXT_CHANNEL_LOW_BALANCE = 0
 				# that's why we must average across experiments both for jamming and honest cases
-				random.seed(0)
-				np.random.seed(0)
 				sender_revenue_j, router_revenue_j, num_p_j, num_f_j = average_result_values(jamming_route, num_simulations, simulation_duration)
 				assert(num_p_j == num_f_j)
 				sender_revenue_h, router_revenue_h, num_p_h, num_f_h = average_result_values(honest_route, num_simulations, simulation_duration)
@@ -158,7 +156,7 @@ def run_simulations(num_simulations, simulation_duration):
 					])
 
 
-#COMMON_RANGE = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10]
+#COMMON_RANGE = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2]
 COMMON_RANGE = [0.01, 0.1, 1]
 
 # upfront base fee it this many times higher than success-case base fee
@@ -172,7 +170,13 @@ def main():
 		help="The number of simulation runs per parameter combinaiton.")
 	parser.add_argument("--simulation_duration", default=60, type=int,
 		help="Simulation duration in seconds.")
+	parser.add_argument("--seed", type=int,
+		help="Seed for randomness initialization.")
 	args = parser.parse_args()
+
+	if args.seed is not None:
+		random.seed(args.seed)
+		np.random.seed(args.seed)
 
 	run_simulations(args.num_simulations, args.simulation_duration)
 

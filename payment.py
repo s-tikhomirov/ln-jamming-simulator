@@ -10,8 +10,7 @@ class Payment:
 		upfront_fee_function,
 		success_fee_function, 
 		delay=None,
-		receiver_gets=None,
-		subtract_upfront_fee_from_last_hop_amount=True):
+		receiver_amount=None):
 		"""
 			Construct a payment.
 
@@ -36,20 +35,20 @@ class Payment:
 					Delay is copied over through all payment layers.
 					In our model, a payment incurs the same delay on all hops in the route.
 
-				receiver_gets
+				receiver_amount
 					How much the receiver will get if the payment succeeds.
 
 		"""
 		# for the last node, there is no downstream payment
 		is_last_hop = downstream_payment is None
 		# for an intermediary node, the final amount and delay are already determined
-		is_not_last_hop = receiver_gets is None and delay is None
+		is_not_last_hop = receiver_amount is None and delay is None
 		# make sure that given arguments are not contradictory w.r.t. last or not-last hop
 		assert(is_last_hop or is_not_last_hop)
 		self.downstream_payment = downstream_payment
 		if is_last_hop:
 			# this might have been adjusted by the sender to exclude upfront fee
-			self.body = receiver_gets
+			self.body = receiver_amount
 			# success-case fee for the last hop is zero by definition
 			self.success_fee = 0
 			self.delay = delay
@@ -63,7 +62,6 @@ class Payment:
 		# amount = body + success-case fee (by definition!)
 		# amount is how much is encoded in the HTLC
 		self.amount = self.body + self.success_fee
-		assert(self.amount >= ProtocolParams["DUST_LIMIT"]), (self.amount, DUST_LIMIT)
 		# upfront-fee is calculated based on the _amount_
 		self.upfront_fee = upfront_fee_function(self.amount)
 		
