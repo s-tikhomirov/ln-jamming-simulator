@@ -35,15 +35,16 @@ def test_manual_payment_creation():
 	p0 = Payment(None, upfront_fee_function, success_fee_function, receiver_amount=100)
 	p1 = Payment(p0, upfront_fee_function, success_fee_function)
 	p2 = Payment(p1, upfront_fee_function, success_fee_function)
+	print(p2)
 	assert(p0.body 			== 100)
 	assert(p0.success_fee 	== 0)
 	assert(p0.upfront_fee 	== 4)
 	assert(p1.body 			== 100)
 	assert(p1.success_fee 	== 10)
-	assert(p1.upfront_fee 	== 5)
+	assert(p1.upfront_fee 	== 9)
 	assert(p2.body 			== 110)
 	assert(p2.success_fee 	== 11)
-	assert(p2.upfront_fee 	== 5)
+	assert(p2.upfront_fee 	== 14)
 
 
 #### ROUTING TESTS ####
@@ -92,7 +93,7 @@ def test_route_based_payment_creation():
 	assert(p.downstream_payment.upfront_fee 	== 4)
 	assert(p.body 			== 96)
 	assert(p.success_fee 	== 10)
-	assert(p.upfront_fee 	== 5)
+	assert(p.upfront_fee 	== 9)
 	reset_route(route)
 
 
@@ -103,12 +104,15 @@ def test_payment_routing():
 	"""
 	p = sender.create_payment(route)
 	sender.route_payment(p, route)
-	assert(sender.revenue 	== -15)
-	assert(router.revenue 	== 11)
+	assert(sender.upfront_revenue 	== -9)
+	assert(sender.success_revenue 	== -10)
+	assert(router.upfront_revenue 	== 5)
+	assert(router.success_revenue 	== 10)
 	# payment got to the receiver
 	# we discard receiver's upfront fee revenue
 	# because it was subtracted from the amount at payment construction
-	assert(receiver.revenue == 0)
+	assert(receiver.upfront_revenue == 0)
+	assert(receiver.success_revenue == 0)
 	reset_route(route)
 
 
@@ -121,10 +125,13 @@ def test_payment_rejected_by_router():
 	router.prob_next_channel_low_balance = 1
 	sender.route_payment(p, route)
 	router.prob_next_channel_low_balance = 0
-	assert(sender.revenue == -5)
-	assert(router.revenue == 5)
+	assert(sender.upfront_revenue 	== -9)
+	assert(sender.success_revenue 	== 0)
+	assert(router.upfront_revenue 	== 9)
+	assert(router.success_revenue 	== 0)
 	# the payment didn't get to the receiver
-	assert(receiver.revenue == 0)
+	assert(receiver.upfront_revenue == 0)
+	assert(receiver.success_revenue == 0)
 	reset_route(route)
 
 
@@ -137,11 +144,14 @@ def test_payment_rejected_by_receiver():
 	receiver.prob_deliberately_fail = 1
 	sender.route_payment(p, route)
 	receiver.prob_deliberately_fail = 0
-	assert(sender.revenue == -5)
-	assert(router.revenue == 1)
+	assert(sender.upfront_revenue 	== -9)
+	assert(sender.success_revenue 	== 0)
+	assert(router.upfront_revenue 	== 5)
+	assert(router.success_revenue 	== 0)
 	# the payment got to the receiver (jammer) but was rejected
 	# we count upfront fee for failed payment as revenue
-	assert(receiver.revenue == 4)
+	assert(receiver.upfront_revenue == 4)
+	assert(receiver.success_revenue == 0)
 	reset_route(route)
 
 
@@ -153,18 +163,24 @@ def test_slots():
 	sender.route_payment(p, route)
 	# payment delay is 2 but time to next is 1
 	# when the next payment (potentially) arrives
-	assert(sender.revenue == -15)
-	assert(router.revenue == 11)
+	assert(sender.upfront_revenue 	== -9)
+	assert(sender.success_revenue 	== -10)
+	assert(router.upfront_revenue 	== 5)
+	assert(router.success_revenue 	== 10)
 	# the router's only slot is busy for 1 more second
 	assert(router.slot_leftovers == [1])
 	sender.route_payment(p, route)
 	# the next payment is failed by the sender because the router doesn't have free slots
-	assert(sender.revenue == -15)
-	assert(router.revenue == 11)
+	assert(sender.upfront_revenue 	== -9)
+	assert(sender.success_revenue 	== -10)
+	assert(router.upfront_revenue 	== 5)
+	assert(router.success_revenue 	== 10)
 	assert(router.slot_leftovers == [0])
 	sender.route_payment(p, route)
-	assert(sender.revenue == -30)
-	assert(router.revenue == 22)
+	assert(sender.upfront_revenue 	== -18)
+	assert(sender.success_revenue 	== -20)
+	assert(router.upfront_revenue 	== 10)
+	assert(router.success_revenue 	== 20)
 	assert(router.slot_leftovers == [1])
 
 	
