@@ -63,7 +63,8 @@ class Payment:
 		# amount is how much is encoded in the HTLC
 		self.amount = self.body + self.success_fee
 		# upfront-fee is calculated based on the _amount_
-		self.upfront_fee = upfront_fee_function(self.amount)
+		downstream_upfront_fee = 0 if downstream_payment is None else downstream_payment.upfront_fee
+		self.upfront_fee = upfront_fee_function(self.amount) + downstream_upfront_fee
 		
 
 	def __str__(self):

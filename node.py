@@ -115,19 +115,11 @@ class Node:
 
 	def reset(self):
 		"""
-			Reset the current revenue, in-flight revenue, slot leftovers, and batch progression.
+			Reset the current revenue, slot leftovers, and batch progression.
 		"""
-		self.revenue, self.in_flight_revenue = 0, 0
+		self.upfront_revenue, self.success_revenue, self.in_flight_revenue, self.revenue = 0, 0, 0, 0
 		self.slot_leftovers.fill(0)
 		self.batch_so_far = 0
-
-	def update_slot_leftovers(self, time_to_next):
-		"""
-			Move simulated time to the time the next payment comes.
-			Slots that are done with the previous payment get assigned leftover = 0 (free).
-		"""
-		self.slot_leftovers = self.slot_leftovers - time_to_next
-		self.slot_leftovers = np.where(self.slot_leftovers < 0, 0, self.slot_leftovers)
 
 	def next_channel_low_balance(self):
 		"""
@@ -143,18 +135,6 @@ class Node:
 		"""
 		return [i for i in range(len(self.slot_leftovers)) if self.slot_leftovers[i] == 0]
 
-	def finalize_in_flight_revenue(self, success):
-		"""
-			If the payment succeeded, add in-flight revenue (i.e., success-case fees)
-			to the total revenue of all nodes on the route.
-			If the payment failed, nullify in-flight revenue.
-		"""
-		if success:
-			#print(self.name, "gets the success-fee difference:", self.in_flight_revenue)
-			self.revenue += self.in_flight_revenue
-			#print(self.name, "'s total revenue now is:", self.revenue)
-		self.in_flight_revenue = 0
-
 	def create_payment(self, route):
 		"""
 			Create a payment for a given route (with random amount and delay).
@@ -169,12 +149,14 @@ class Node:
 		if self.subtract_upfront_fee_from_last_hop_amount:
 			receiver_amount = self.body_for_amount(receiver_amount, receiver.upfront_fee_function)
 		delay = self.payment_delay_function()
+		#print("Wrapping payment w.r.t. fee policy of", receiver.name)
 		p = Payment(None, receiver.upfront_fee_function, receiver.success_fee_function, 
 			delay=delay, receiver_amount=receiver_amount)
 		if self.enforce_dust_limit:
 			assert(p.amount >= ProtocolParams["DUST_LIMIT"]), (p.amount, ProtocolParams["DUST_LIMIT"])
-		for node in reversed(route[:-2]):
-			p = Payment(p, node.upfront_fee_function, receiver.success_fee_function)
+		for node in reversed(route[1:-1]):
+			#print("Wrapping payment w.r.t. fee policy of", node.name)
+			p = Payment(p, node.upfront_fee_function, node.success_fee_function)
 			if self.enforce_dust_limit:
 				assert(p.amount >= ProtocolParams["DUST_LIMIT"]), (p.amount, ProtocolParams["DUST_LIMIT"])
 		return p
@@ -243,10 +225,11 @@ class Node:
 			node_is_receiver = (i == len(route) - 1)
 			if node_is_receiver:
 				#print("Payment reaches", node.name)
-				# we nullify receiver's revenue because its upfront fee
+				# we nullify receiver's upfront revenue because its upfront fee
+				# (success revenue the the receiver is zero by payment construction)
 				# was excluded from final amount when creating the payment
-				node.revenue = 0
-				assert(node.in_flight_revenue == 0)
+				node.upfront_revenue = 0
+				assert(node.success_revenue == 0)
 				break
 
 			# now the node intends to forward the payment
@@ -273,9 +256,9 @@ class Node:
 
 			# account for upfront fee
 			#print(node.name, "pays upfront fee:", payment.upfront_fee)
-			node.revenue -= payment.upfront_fee
+			node.upfront_revenue -= payment.upfront_fee
 			#print(next_node.name, "receives upfront fee:", payment.upfront_fee)
-			next_node.revenue += payment.upfront_fee
+			next_node.upfront_revenue += payment.upfront_fee
 
 			# block a slot in the current ("previous") channel
 			#print("Occupying a slot for payment delay:", payment.delay)
@@ -294,7 +277,7 @@ class Node:
 		#print("Time to next", time_to_next)
 		#print()
 		for node in route:
-			node.finalize_in_flight_revenue(success)
+			node.finalize_success_revenue(success)
 			node.update_slot_leftovers(time_to_next)
 
 		if success:
@@ -302,10 +285,33 @@ class Node:
 			pass
 
 		return success, time_to_next
-
 	
+	def finalize_success_revenue(self, success):
+		"""
+			If the payment succeeded, add in-flight revenue (i.e., success-case fees)
+			to the total revenue of all nodes on the route.
+			If the payment failed, nullify in-flight revenue.
+		"""
+		if success:
+			#print(self.name, "gets the success-fee difference:", self.success_revenue)
+			self.success_revenue += self.in_flight_revenue
+			#print(self.name, "'s total revenue now is:", self.upfront_revenue)
+		self.in_flight_revenue = 0
+		self.revenue = self.success_revenue + self.upfront_revenue
+
+	def update_slot_leftovers(self, time_to_next):
+		"""
+			Move simulated time to the time the next payment comes.
+			Slots that are done with the previous payment get assigned leftover = 0 (free).
+		"""
+		self.slot_leftovers = self.slot_leftovers - time_to_next
+		self.slot_leftovers = np.where(self.slot_leftovers < 0, 0, self.slot_leftovers)
+
 	def __str__(self):
 		s = ""
-		s += self.name + "'s revenue: 	" + str(self.revenue)
+		s += self.name + "'s revenue: 	"
+		s += "Upfront:	" + str(self.upfront_revenue)
+		s += "Success:	" + str(self.success_revenue)
+		s += "Total:	" + str(self.revenue)
 		return s
 

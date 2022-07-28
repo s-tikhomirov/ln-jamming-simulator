@@ -35,6 +35,7 @@ def jamming_delay():
 def jamming_amount():
 	return JammingParams["JAM_AMOUNT"]
 
+
 jammer_sender = Node("JammerSender",
 	prob_next_channel_low_balance=0,
 	time_to_next_function=jamming_time_to_next,
@@ -42,16 +43,20 @@ jammer_sender = Node("JammerSender",
 	payment_delay_function=jamming_delay,
 	num_payments_in_batch=JammingParams["JAM_BATCH_SIZE"],
 	subtract_upfront_fee_from_last_hop_amount=False)
+
 jammer_receiver = Node("Jammer_Receiver",
 	prob_deliberately_fail=1,
 	success_fee_function=success_fee_function)
+
 honest_sender = Node("Sender",
 	prob_next_channel_low_balance=0,
 	time_to_next_function=honest_time_to_next,
 	payment_amount_function=honest_amount,
 	payment_delay_function=honest_delay)
+
 router = Node("Router",
 	success_fee_function=success_fee_function)
+
 honest_receiver = Node("HonestReceiver",
 	success_fee_function=success_fee_function)
 
@@ -71,13 +76,24 @@ def run_simulation(route, simulation_duration):
 	return num_payments, num_failed
 
 def average_result_values(route, num_simulations, simulation_duration):
-	sender_revenues, router_revenues, receiver_revenues, num_payments_values, num_failed_values = [], [], [], [], []
+	sender_revenues, router_revenues, receiver_revenues = [], [], []
+	sender_upfront_revenue_shares, router_upfront_revenue_shares, receiver_upfront_revenue_shares = [], [], []
+	num_payments_values, num_failed_values = [], []
 	for num_simulation in range(num_simulations):
 		print("Simulation", num_simulation + 1, "of", num_simulations)
 		num_payments, num_failed = run_simulation(route, simulation_duration)
 		sender_revenues.append(route[0].revenue)
 		router_revenues.append(route[1].revenue)
 		receiver_revenues.append(route[2].revenue)
+		sender_upfront_revenue_share = route[0].upfront_revenue / route[0].revenue if route[0].revenue != 0 else 0
+		router_upfront_revenue_share = route[1].upfront_revenue / route[1].revenue if route[1].revenue != 0 else 0
+		receiver_upfront_revenue_share = route[2].upfront_revenue / route[2].revenue if route[2].revenue != 0 else 0
+		# generally speaking, upfront revenue can be positive while success revenue is negative, or vice versa
+		# in that case, upfront fee "share" would be negative - for now, just assert that it's not the case
+		assert(sender_upfront_revenue_share >= 0 and router_upfront_revenue_share >= 0 and receiver_upfront_revenue_share >= 0)
+		sender_upfront_revenue_shares.append(sender_upfront_revenue_share)
+		router_upfront_revenue_shares.append(router_upfront_revenue_share)
+		receiver_upfront_revenue_shares.append(receiver_upfront_revenue_share)
 		num_payments_values.append(num_payments)
 		num_failed_values.append(num_failed)
 		for node in route:
@@ -86,6 +102,9 @@ def average_result_values(route, num_simulations, simulation_duration):
 		statistics.mean(sender_revenues),
 		statistics.mean(router_revenues),
 		statistics.mean(receiver_revenues),
+		statistics.mean(sender_upfront_revenue_shares),
+		statistics.mean(router_upfront_revenue_shares),
+		statistics.mean(receiver_upfront_revenue_shares),
 		statistics.mean(num_payments_values),
 		statistics.mean(num_failed_values)
 		)
@@ -108,12 +127,23 @@ def run_simulations(num_simulations, simulation_duration):
 			"upfront_base", "upfront_rate",
 			"num_payments_honest", "num_failed_honest", "share_failed",
 			"num_jams",
-			"h_sender_revenue", "j_sender_revenue",
-			"h_router_revenue", "j_router_revenue",
-			"h_receiver_revenue", "j_receiver_revenue",
+			"h_snd_revenue",
+			"h_snd_upfront_share",
+			"j_snd_revenue",
+			"j_snd_upfront_share",
+			"h_rtr_revenue",
+			"h_rtr_upfront_share",
+			"j_rtr_revenue",
+			"j_rtr_upfront_share",
+			"h_rcv_revenue",
+			"h_rcv_upfront_share",
+			"j_rcv_revenue",
+			"j_rcv_upfront_share",
 			"j_attack_cost"])
 		num_parameter_sets = len(UPFRONT_BASE_COEFF_RANGE) * len(UPFRONT_RATE_COEFF_RANGE)
 		i = 1
+		print("Upfront base coeff in", UPFRONT_BASE_COEFF_RANGE)
+		print("Upfront rate coeff in", UPFRONT_RATE_COEFF_RANGE)
 		for upfront_base_coeff in UPFRONT_BASE_COEFF_RANGE:
 			for upfront_rate_coeff in UPFRONT_RATE_COEFF_RANGE:
 				print("\nParameter combination", i ,"of", num_parameter_sets)
@@ -126,10 +156,20 @@ def run_simulations(num_simulations, simulation_duration):
 					node.upfront_fee_function = upfront_fee_function
 				# jamming revenue is constant ONLY if PROB_NEXT_CHANNEL_LOW_BALANCE = 0
 				# that's why we must average across experiments both for jamming and honest cases
-				sender_revenue_j, router_revenue_j, receiver_revenue_j, num_p_j, num_f_j = average_result_values(jamming_route, num_simulations, simulation_duration)
+				print("Simulating jamming scenario")
+				(
+					sender_revenue_j, router_revenue_j, receiver_revenue_j, 
+					sender_upfront_revenue_shares_j, router_upfront_revenue_shares_j, receiver_upfront_revenue_shares_j,
+					num_p_j, num_f_j
+					) = average_result_values(jamming_route, num_simulations, simulation_duration)
 				assert(num_p_j == num_f_j)
 				attack_cost_j = sender_revenue_j + receiver_revenue_j
-				sender_revenue_h, router_revenue_h, receiver_revenue_h, num_p_h, num_f_h = average_result_values(honest_route, num_simulations, simulation_duration)
+				print("Simulating honest scenario")
+				(
+					sender_revenue_h, router_revenue_h, receiver_revenue_h, 
+					sender_upfront_revenue_shares_h, router_upfront_revenue_shares_h, receiver_upfront_revenue_shares_h,
+					num_p_h, num_f_h
+					) = average_result_values(honest_route, num_simulations, simulation_duration)
 				share_failed_h = num_f_h/num_p_h
 				print("\nOn average per simulation (honest):", 
 					num_p_h, "payments,",
@@ -137,9 +177,9 @@ def run_simulations(num_simulations, simulation_duration):
 				print("On average per simulation (jamming):", 
 					num_p_j, "payments,",
 					num_f_j, "of them failed.")
-				print("Sender's revenue (honest, jamming):	", sender_revenue_h, sender_revenue_j)
-				print("Router's revenue (honest, jamming):	", router_revenue_h, router_revenue_j)
-				print("Receiver's revenue (honest, jamming):	", receiver_revenue_h, receiver_revenue_j)
+				#print("Sender's revenue (honest, jamming):	", sender_revenue_h, sender_revenue_j)
+				#print("Router's revenue (honest, jamming):	", router_revenue_h, router_revenue_j)
+				#print("Receiver's revenue (honest, jamming):	", receiver_revenue_h, receiver_revenue_j)
 				writer.writerow([
 					upfront_base_coeff, 
 					upfront_rate_coeff,
@@ -153,20 +193,25 @@ def run_simulations(num_simulations, simulation_duration):
 					share_failed_h,
 					num_p_j,
 					sender_revenue_h,
+					sender_upfront_revenue_shares_h,
 					sender_revenue_j,
+					sender_upfront_revenue_shares_j,
 					router_revenue_h,
+					router_upfront_revenue_shares_h,
 					router_revenue_j,
+					router_upfront_revenue_shares_j,
 					receiver_revenue_h,
+					receiver_upfront_revenue_shares_h,
 					receiver_revenue_j,
+					receiver_upfront_revenue_shares_j,
 					attack_cost_j
 					])
 
 
-COMMON_RANGE = [0.01, 0.1, 1, 10, 100]
+COMMON_RANGE = [0, 0.001, 0.002, 0.003]
 
-# upfront base fee it this many times higher than success-case base fee
+# upfront base fee / fee rate it this many times higher than success-case counterparts
 UPFRONT_BASE_COEFF_RANGE = COMMON_RANGE
-# upfront fee rate is this many times higher than success-case fee rate
 UPFRONT_RATE_COEFF_RANGE = COMMON_RANGE
 
 def main():

@@ -24,12 +24,13 @@ PaymentFlowParams = {
 
 	# the probability that a payment fails at a hop
 	# because the _next_ channel can't handle it (e.g., low balance)
-	"PROB_NEXT_CHANNEL_LOW_BALANCE" : 0,
+	"PROB_NEXT_CHANNEL_LOW_BALANCE" : 0.05,
 }
 
 ProtocolParams = {
 	# all payment amounts (on every layer) must be higher than dust limit
 	# (otherwise HTLCs are trimmed)
+	# we use the value 354 ("unknown segwit versions")
 	# https://github.com/lightning/bolts/blob/master/03-transactions.md#dust-limits
 	"DUST_LIMIT" : 354,
 
