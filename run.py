@@ -36,6 +36,7 @@ def jamming_amount():
 	return JammingParams["JAM_AMOUNT"]
 
 jammer_sender = Node("JammerSender",
+	prob_next_channel_low_balance=0,
 	time_to_next_function=jamming_time_to_next,
 	payment_amount_function=jamming_amount,
 	payment_delay_function=jamming_delay,
@@ -45,6 +46,7 @@ jammer_receiver = Node("Jammer_Receiver",
 	prob_deliberately_fail=1,
 	success_fee_function=success_fee_function)
 honest_sender = Node("Sender",
+	prob_next_channel_low_balance=0,
 	time_to_next_function=honest_time_to_next,
 	payment_amount_function=honest_amount,
 	payment_delay_function=honest_delay)
@@ -97,6 +99,7 @@ def run_simulations(num_simulations, simulation_duration):
 		writer.writerow(["success_base", str(FeeParams["SUCCESS_BASE"])])
 		writer.writerow(["success_rate", str(FeeParams["SUCCESS_RATE"])])
 		writer.writerow(["HONEST_PAYMENT_EVERY_SECONDS", str(PaymentFlowParams["HONEST_PAYMENT_EVERY_SECONDS"])])
+		writer.writerow(["PROB_NEXT_CHANNEL_LOW_BALANCE", str(PaymentFlowParams["PROB_NEXT_CHANNEL_LOW_BALANCE"])])
 		writer.writerow(["JAM_DELAY", str(JammingParams["JAM_DELAY"])])
 		writer.writerow(["JAM_AMOUNT", str(JammingParams["JAM_AMOUNT"])])
 		writer.writerow("")
