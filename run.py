@@ -6,13 +6,14 @@ import numpy as np
 import random
 import statistics
 import time
+from math import ceil
 
 from numpy.random import exponential, lognormal
 
 from node import Node
 from payment import Payment
 
-from params import PaymentFlowParams, FeeParams, JammingParams
+from params import PaymentFlowParams, FeeParams, JammingParams, ProtocolParams
 
 
 def generic_fee_function(a, base, rate):
@@ -63,25 +64,44 @@ honest_receiver = Node("HonestReceiver",
 honest_route = [honest_sender, router, honest_receiver]
 jamming_route = [jammer_sender, router, jammer_receiver]
 
-
-def run_simulation(route, simulation_duration):
-	sender, elapsed, num_payments, num_failed = route[0], 0, 0, 0
-	while elapsed < simulation_duration:
-		payment = sender.create_payment(route)
-		success, time_to_next = sender.route_payment(payment, route)
-		num_payments += 1
-		if not success:
-			num_failed += 1
-		elapsed += time_to_next
+def run_simulation(route, simulation_duration, no_balance_failures=False):
+	sender, receiver, elapsed, num_payments, num_failed = route[0], route[-1], 0, 0, 0
+	if no_balance_failures:
+		num_batches = ceil(simulation_duration / JammingParams["JAM_DELAY"])
+		jams_in_batch = ProtocolParams["NUM_SLOTS"]
+		num_payments = num_batches * jams_in_batch
+		num_failed = num_payments
+		p = sender.create_payment(route)
+		sender.upfront_revenue = - num_payments * p.upfront_fee
+		for node in route[1:-1]:
+			node.upfront_revenue = num_payments * (p.upfront_fee - p.downstream_payment.upfront_fee)
+			p = p.downstream_payment
+		receiver.upfront_revenue = num_payments * p.upfront_fee
+		for node in route:
+			node.success_revenue = 0
+			node.revenue = node.upfront_revenue + node.success_revenue
+	else:
+		while elapsed < simulation_duration:
+			payment = sender.create_payment(route)
+			success, time_to_next = sender.route_payment(payment, route)
+			num_payments += 1
+			if not success:
+				num_failed += 1
+			elapsed += time_to_next
 	return num_payments, num_failed
 
-def average_result_values(route, num_simulations, simulation_duration):
+def average_result_values(route, num_simulations, simulation_duration, no_balance_failures=False):
 	sender_revenues, router_revenues, receiver_revenues = [], [], []
 	sender_upfront_revenue_shares, router_upfront_revenue_shares, receiver_upfront_revenue_shares = [], [], []
 	num_payments_values, num_failed_values = [], []
-	for num_simulation in range(num_simulations):
-		print("Simulation", num_simulation + 1, "of", num_simulations)
-		num_payments, num_failed = run_simulation(route, simulation_duration)
+	# if probability of failure is 0, we run just one simulation for jamming
+	# it doesn't make sense to repeat because the results are deterministic
+	if no_balance_failures:
+		print("With zero failure probability, jamming simulations are done analytically.")
+	effective_num_simulations = num_simulations if no_balance_failures else num_simulations
+	for num_simulation in range(effective_num_simulations):
+		print("Simulation", num_simulation + 1, "of", effective_num_simulations)
+		num_payments, num_failed = run_simulation(route, simulation_duration, no_balance_failures)
 		sender_revenues.append(route[0].revenue)
 		router_revenues.append(route[1].revenue)
 		receiver_revenues.append(route[2].revenue)
@@ -156,12 +176,13 @@ def run_simulations(num_simulations, simulation_duration):
 					node.upfront_fee_function = upfront_fee_function
 				# jamming revenue is constant ONLY if PROB_NEXT_CHANNEL_LOW_BALANCE = 0
 				# that's why we must average across experiments both for jamming and honest cases
+				no_failures = PaymentFlowParams["PROB_NEXT_CHANNEL_LOW_BALANCE"] == 0
 				print("Simulating jamming scenario")
 				(
 					sender_revenue_j, router_revenue_j, receiver_revenue_j, 
 					sender_upfront_revenue_shares_j, router_upfront_revenue_shares_j, receiver_upfront_revenue_shares_j,
 					num_p_j, num_f_j
-					) = average_result_values(jamming_route, num_simulations, simulation_duration)
+					) = average_result_values(jamming_route, num_simulations, simulation_duration, no_failures)
 				assert(num_p_j == num_f_j)
 				attack_cost_j = sender_revenue_j + receiver_revenue_j
 				print("Simulating honest scenario")
@@ -213,6 +234,7 @@ COMMON_RANGE = [0, 0.001, 0.002, 0.003]
 # upfront base fee / fee rate it this many times higher than success-case counterparts
 UPFRONT_BASE_COEFF_RANGE = COMMON_RANGE
 UPFRONT_RATE_COEFF_RANGE = COMMON_RANGE
+
 
 def main():
 	parser = argparse.ArgumentParser()
