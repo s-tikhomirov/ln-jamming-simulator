@@ -202,7 +202,8 @@ class Node:
 		assert(len(route) >= 2)
 		# payment means the current-level payment
 		payment = outermost_payment
-		success = True
+		# TODO: think when this should be assigned and how
+		reached_receiver = False
 		for i in range(len(route)):
 			node = route[i]
 
@@ -228,6 +229,7 @@ class Node:
 				# we nullify receiver's upfront revenue because its upfront fee
 				# (success revenue the the receiver is zero by payment construction)
 				# was excluded from final amount when creating the payment
+				success = True
 				node.upfront_revenue = 0
 				assert(node.success_revenue == 0)
 				break
@@ -284,7 +286,7 @@ class Node:
 			#print("Payment complete!")
 			pass
 
-		return success, time_to_next
+		return success, reached_receiver, time_to_next
 	
 	def finalize_success_revenue(self, success):
 		"""

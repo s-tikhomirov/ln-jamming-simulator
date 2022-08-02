@@ -83,7 +83,8 @@ def run_simulation(route, simulation_duration, no_balance_failures=False):
 	else:
 		while elapsed < simulation_duration:
 			payment = sender.create_payment(route)
-			success, time_to_next = sender.route_payment(payment, route)
+			success, reached_receiver, time_to_next = sender.route_payment(payment, route)
+			# TODO: use reached_receiver
 			num_payments += 1
 			if not success:
 				num_failed += 1

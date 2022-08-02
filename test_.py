@@ -103,7 +103,9 @@ def test_payment_routing():
 		All success-case and upfront fees are paid.
 	"""
 	p = sender.create_payment(route)
-	sender.route_payment(p, route)
+	success, reached_receiver, time_to_next = sender.route_payment(p, route)
+	assert(success)
+	assert(time_to_next == 1)
 	assert(sender.upfront_revenue 	== -9)
 	assert(sender.success_revenue 	== -10)
 	assert(router.upfront_revenue 	== 5)
@@ -123,7 +125,9 @@ def test_payment_rejected_by_router():
 	"""
 	p = sender.create_payment(route)
 	router.prob_next_channel_low_balance = 1
-	sender.route_payment(p, route)
+	success, reached_receiver, time_to_next = sender.route_payment(p, route)
+	assert(not success)
+	assert(time_to_next == 1)
 	router.prob_next_channel_low_balance = 0
 	assert(sender.upfront_revenue 	== -9)
 	assert(sender.success_revenue 	== 0)
@@ -142,7 +146,9 @@ def test_payment_rejected_by_receiver():
 	"""
 	p = sender.create_payment(route)
 	receiver.prob_deliberately_fail = 1
-	sender.route_payment(p, route)
+	success, reached_receiver, time_to_next = sender.route_payment(p, route)
+	assert(not success)
+	assert(time_to_next == 1)
 	receiver.prob_deliberately_fail = 0
 	assert(sender.upfront_revenue 	== -9)
 	assert(sender.success_revenue 	== 0)
@@ -160,23 +166,29 @@ def test_slots():
 		Check that a routing node with the (only) slot occupied cannot take another payment.
 	"""
 	p = sender.create_payment(route)
-	sender.route_payment(p, route)
+	success, reached_receiver, time_to_next = sender.route_payment(p, route)
 	# payment delay is 2 but time to next is 1
 	# when the next payment (potentially) arrives
+	assert(success)
+	assert(time_to_next == 1)
 	assert(sender.upfront_revenue 	== -9)
 	assert(sender.success_revenue 	== -10)
 	assert(router.upfront_revenue 	== 5)
 	assert(router.success_revenue 	== 10)
 	# the router's only slot is busy for 1 more second
 	assert(router.slot_leftovers == [1])
-	sender.route_payment(p, route)
+	success, reached_receiver, time_to_next = sender.route_payment(p, route)
 	# the next payment is failed by the sender because the router doesn't have free slots
+	assert(not success)
+	assert(time_to_next == 1)
 	assert(sender.upfront_revenue 	== -9)
 	assert(sender.success_revenue 	== -10)
 	assert(router.upfront_revenue 	== 5)
 	assert(router.success_revenue 	== 10)
 	assert(router.slot_leftovers == [0])
-	sender.route_payment(p, route)
+	success, reached_receiver, time_to_next = sender.route_payment(p, route)
+	assert(success)
+	assert(time_to_next == 1)
 	assert(sender.upfront_revenue 	== -18)
 	assert(sender.success_revenue 	== -20)
 	assert(router.upfront_revenue 	== 10)
