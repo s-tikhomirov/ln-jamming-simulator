@@ -1,248 +1,231 @@
-#!/usr/bin/env python3
+from simulator import Simulator
+from schedule import Schedule, Event
+from lnmodel import LNModel, RevenueType
 
-import argparse
+from params import honest_amount_function, honest_proccesing_delay_function, honest_generation_delay_function
+from params import ProtocolParams, PaymentFlowParams, FeeParams
+
+import json
 import csv
-import numpy as np
-import random
-import statistics
-import time
-from math import ceil
+from statistics import mean
+from time import time
+import argparse
 
-from numpy.random import exponential, lognormal
+channel_ABx0 = {
+	"source": "Alice",
+	"destination": "Bob",
+	"short_channel_id": "ABx0",
+	"satoshis": 1000000,
+	"active": True,
+	"base_fee_millisatoshi": 1000,
+	"fee_per_millionth": 5,
+	"base_fee_millisatoshi_upfront": 0,
+	"fee_per_millionth_upfront": 0
+	}
+channel_BCx0 = {
+	"source": "Bob",
+	"destination": "Charlie",
+	"short_channel_id": "BCx0",
+	"satoshis": 1000000,
+	"active": True,
+	"base_fee_millisatoshi": 1000,
+	"fee_per_millionth": 5,
+	"base_fee_millisatoshi_upfront": 0,
+	"fee_per_millionth_upfront": 0
+	}
+channel_CDx0 = {
+	"source": "Charlie",
+	"destination": "Dave",
+	"short_channel_id": "CDx0",
+	"satoshis": 1000000,
+	"active": True,
+	"base_fee_millisatoshi": 1000,
+	"fee_per_millionth": 5,
+	"base_fee_millisatoshi_upfront": 0,
+	"fee_per_millionth_upfront": 0
+}
+snapshot_json = {"channels" : [channel_ABx0, channel_BCx0, channel_CDx0]}
 
-from node import Node
-from payment import Payment
+SUCCESS_FEE_BASE = FeeParams["SUCCESS_BASE"]
+SUCCESS_FEE_RATE = FeeParams["SUCCESS_RATE"]
+NUM_SLOTS = ProtocolParams["NUM_SLOTS"]
 
-from params import PaymentFlowParams, FeeParams, JammingParams, ProtocolParams
+NO_BALANCE_FAILURES = True
+KEEP_RECEIVER_UPFRONT_FEE = True
 
+def run_simulation_honest(ln_model, simulation_duration, num_simulations, 
+	no_balance_failures=NO_BALANCE_FAILURES, keep_receiver_upfront_fee=KEEP_RECEIVER_UPFRONT_FEE):
+	print("  Strating honest")
+	sim = Simulator(ln_model)
+	tmp_revenues = {"Alice" : [], "Bob" : [], "Charlie": [], "Dave": []}
+	for i in range(num_simulations):
+		print("    Simulation", i + 1, "of", num_simulations)
+		for n, m in (("Alice", "Bob"), ("Bob", "Charlie"), ("Charlie", "Dave")):
+			ln_model.set_num_slots("Alice", "Bob", NUM_SLOTS)
+		sch_honest = Schedule()
+		sch_honest.generate_schedule(
+			senders_list = ["Alice"],
+			receivers_list = ["Dave"],
+			amount_function = honest_amount_function,
+			desired_result = True,
+			payment_processing_delay_function = honest_proccesing_delay_function,
+			payment_generation_delay_function = honest_generation_delay_function,
+			scheduled_duration = simulation_duration)
+		num_events = sim.execute_schedule(sch_honest, 
+			no_balance_failures=no_balance_failures,
+			keep_receiver_upfront_fee=keep_receiver_upfront_fee,
+			simulation_end = simulation_duration)
+		print("Handled events:", num_events)
+		for node in ("Alice", "Bob", "Charlie", "Dave"):
+			upfront_revenue = ln_model.get_revenue(node, RevenueType.UPFRONT)
+			success_revenue = ln_model.get_revenue(node, RevenueType.SUCCESS)
+			total_revenue = upfront_revenue + success_revenue
+			tmp_revenues[node].append(total_revenue)
+		ln_model.reset(NUM_SLOTS)
+	revenues = {}
+	for node in ("Alice", "Bob", "Charlie", "Dave"):
+		revenues[node] = mean(tmp_revenues[node])
+	return num_events, revenues
 
-def generic_fee_function(a, base, rate):
-	return base + rate * a
+def run_simulation_jamming(ln_model, simulation_duration, num_simulations,
+	no_balance_failures=NO_BALANCE_FAILURES, keep_receiver_upfront_fee=KEEP_RECEIVER_UPFRONT_FEE):
+	print("  Strating jamming")
+	sim = Simulator(ln_model)
+	tmp_revenues = {"Alice" : [], "Bob" : [], "Charlie": [], "Dave": []}
+	for i in range(num_simulations):
+		ln_model.set_num_slots("Alice", "Bob", 		2 * NUM_SLOTS)
+		ln_model.set_num_slots("Bob", "Charlie", 		NUM_SLOTS)
+		ln_model.set_num_slots("Charlie", "Dave", 	2 *	NUM_SLOTS)
+		print("    Simulation", i + 1, "of", num_simulations)
+		sch_jamming = Schedule()
+		first_jam = Event("Alice", "Dave", 
+			amount = ProtocolParams["DUST_LIMIT"],
+			processing_delay = PaymentFlowParams["MIN_DELAY"] + 2 * PaymentFlowParams["EXPECTED_EXTRA_DELAY"],
+			desired_result = False)
+		sch_jamming.put_event(0, first_jam)
+		num_events = sim.execute_schedule(sch_jamming,
+			target_node_pair = ("Bob", "Charlie"),
+			jam_with_insertion = True,
+			no_balance_failures=no_balance_failures,
+			keep_receiver_upfront_fee=keep_receiver_upfront_fee,
+			simulation_end = simulation_duration)
+		print("Handled events:", num_events)
+		for node in ("Alice", "Bob", "Charlie", "Dave"):
+			upfront_revenue = ln_model.get_revenue(node, RevenueType.UPFRONT)
+			success_revenue = ln_model.get_revenue(node, RevenueType.SUCCESS)
+			total_revenue = upfront_revenue + success_revenue
+			tmp_revenues[node].append(total_revenue)
+		ln_model.reset(NUM_SLOTS)
+	revenues = {}
+	for node in ("Alice", "Bob", "Charlie", "Dave"):
+		revenues[node] = mean(tmp_revenues[node])
+	return num_events, revenues
 
-def success_fee_function(a):
-	return generic_fee_function(a, FeeParams["SUCCESS_BASE"], FeeParams["SUCCESS_RATE"])
+def run_simulation_pair(ln_model, upfront_base_coeff, upfront_rate_coeff, simulation_duration, num_simulations):
+	print("\nStarting simulation pair")
+	for node_1, node_2 in (("Alice", "Bob"), ("Bob", "Charlie"), ("Charlie", "Dave")):
+		ln_model.set_fee_function(node_1, node_2, RevenueType.UPFRONT, SUCCESS_FEE_BASE * upfront_base_coeff, SUCCESS_FEE_RATE * upfront_rate_coeff)
+		ln_model.set_fee_function(node_1, node_2, RevenueType.SUCCESS, SUCCESS_FEE_BASE, SUCCESS_FEE_RATE)
+	revenues = {"honest" : {}, "jamming": {}}
+	num_honest_payments, revenues["honest"] = run_simulation_honest(ln_model, simulation_duration, num_simulations)
+	num_jams, revenues["jamming"] = run_simulation_jamming(ln_model, simulation_duration, num_simulations)
+	return num_honest_payments, num_jams, revenues
 
-def honest_time_to_next():
-	return exponential(PaymentFlowParams["HONEST_PAYMENT_EVERY_SECONDS"])
-def honest_delay():
-	return PaymentFlowParams["MIN_DELAY"] + exponential(PaymentFlowParams["EXPECTED_EXTRA_DELAY"])
-def honest_amount():
-	return lognormal(mean=PaymentFlowParams["AMOUNT_MU"], sigma=PaymentFlowParams["AMOUNT_SIGMA"])
+def run_simulation_series(ln_model, upfront_base_coeff_range, upfront_rate_coeff_range, simulation_duration, num_simulations):
+	results = []
+	for upfront_base_coeff in upfront_base_coeff_range:
+		for upfront_rate_coeff in upfront_rate_coeff_range:
+			num_honest_payments, num_jams, revenues = \
+			run_simulation_pair(ln_model, upfront_base_coeff, upfront_rate_coeff, simulation_duration, num_simulations)
+			result = {
+			"upfront_base_coeff": upfront_base_coeff,
+			"upfront_rate_coeff": upfront_rate_coeff,
+			"num_honest_payments": num_honest_payments, 
+			"num_jams": num_jams,
+			"revenues": revenues }
+			results.append(result)
+	return results
 
-def jamming_time_to_next():
-	return JammingParams["JAM_DELAY"]
-def jamming_delay():
-	return JammingParams["JAM_DELAY"]
-def jamming_amount():
-	return JammingParams["JAM_AMOUNT"]
+def results_to_json_file(results, timestamp):
+	with open("results/" + timestamp + "-results" +".json", "w", newline="") as f:
+		json.dump(results, f, indent=4)
 
-
-jammer_sender = Node("JammerSender",
-	prob_next_channel_low_balance=0,
-	time_to_next_function=jamming_time_to_next,
-	payment_amount_function=jamming_amount,
-	payment_delay_function=jamming_delay,
-	num_payments_in_batch=JammingParams["JAM_BATCH_SIZE"],
-	subtract_upfront_fee_from_last_hop_amount=False)
-
-jammer_receiver = Node("Jammer_Receiver",
-	prob_deliberately_fail=1,
-	success_fee_function=success_fee_function)
-
-honest_sender = Node("Sender",
-	prob_next_channel_low_balance=0,
-	time_to_next_function=honest_time_to_next,
-	payment_amount_function=honest_amount,
-	payment_delay_function=honest_delay)
-
-router = Node("Router",
-	success_fee_function=success_fee_function)
-
-honest_receiver = Node("HonestReceiver",
-	success_fee_function=success_fee_function)
-
-honest_route = [honest_sender, router, honest_receiver]
-jamming_route = [jammer_sender, router, jammer_receiver]
-
-def run_simulation(route, simulation_duration, no_balance_failures=False):
-	sender, receiver, elapsed, num_payments, num_failed = route[0], route[-1], 0, 0, 0
-	if no_balance_failures:
-		num_batches = ceil(simulation_duration / JammingParams["JAM_DELAY"])
-		jams_in_batch = ProtocolParams["NUM_SLOTS"]
-		num_payments = num_batches * jams_in_batch
-		num_failed = num_payments
-		p = sender.create_payment(route)
-		sender.upfront_revenue = - num_payments * p.upfront_fee
-		for node in route[1:-1]:
-			node.upfront_revenue = num_payments * (p.upfront_fee - p.downstream_payment.upfront_fee)
-			p = p.downstream_payment
-		receiver.upfront_revenue = num_payments * p.upfront_fee
-		for node in route:
-			node.success_revenue = 0
-			node.revenue = node.upfront_revenue + node.success_revenue
-	else:
-		while elapsed < simulation_duration:
-			payment = sender.create_payment(route)
-			success, reached_receiver, time_to_next = sender.route_payment(payment, route)
-			# TODO: use reached_receiver
-			num_payments += 1
-			if not success:
-				num_failed += 1
-			elapsed += time_to_next
-	return num_payments, num_failed
-
-def average_result_values(route, num_simulations, simulation_duration, no_balance_failures=False):
-	sender_revenues, router_revenues, receiver_revenues = [], [], []
-	sender_upfront_revenue_shares, router_upfront_revenue_shares, receiver_upfront_revenue_shares = [], [], []
-	num_payments_values, num_failed_values = [], []
-	# if probability of failure is 0, we run just one simulation for jamming
-	# it doesn't make sense to repeat because the results are deterministic
-	if no_balance_failures:
-		print("With zero failure probability, jamming simulations are done analytically.")
-	effective_num_simulations = num_simulations if no_balance_failures else num_simulations
-	for num_simulation in range(effective_num_simulations):
-		print("Simulation", num_simulation + 1, "of", effective_num_simulations)
-		num_payments, num_failed = run_simulation(route, simulation_duration, no_balance_failures)
-		sender_revenues.append(route[0].revenue)
-		router_revenues.append(route[1].revenue)
-		receiver_revenues.append(route[2].revenue)
-		sender_upfront_revenue_share = route[0].upfront_revenue / route[0].revenue if route[0].revenue != 0 else 0
-		router_upfront_revenue_share = route[1].upfront_revenue / route[1].revenue if route[1].revenue != 0 else 0
-		receiver_upfront_revenue_share = route[2].upfront_revenue / route[2].revenue if route[2].revenue != 0 else 0
-		# generally speaking, upfront revenue can be positive while success revenue is negative, or vice versa
-		# in that case, upfront fee "share" would be negative - for now, just assert that it's not the case
-		assert(sender_upfront_revenue_share >= 0 and router_upfront_revenue_share >= 0 and receiver_upfront_revenue_share >= 0)
-		sender_upfront_revenue_shares.append(sender_upfront_revenue_share)
-		router_upfront_revenue_shares.append(router_upfront_revenue_share)
-		receiver_upfront_revenue_shares.append(receiver_upfront_revenue_share)
-		num_payments_values.append(num_payments)
-		num_failed_values.append(num_failed)
-		for node in route:
-			node.reset()
-	return (
-		statistics.mean(sender_revenues),
-		statistics.mean(router_revenues),
-		statistics.mean(receiver_revenues),
-		statistics.mean(sender_upfront_revenue_shares),
-		statistics.mean(router_upfront_revenue_shares),
-		statistics.mean(receiver_upfront_revenue_shares),
-		statistics.mean(num_payments_values),
-		statistics.mean(num_failed_values)
-		)
-
-def run_simulations(num_simulations, simulation_duration):
-	timestamp = str(int(time.time()))
-	with open("results/" + timestamp + "-revenues" +".csv", "w", newline="") as f:
+def results_to_csv_file(results, timestamp):
+	with open("results/" + timestamp + "-results" +".csv", "w", newline="") as f:
 		writer = csv.writer(f, delimiter = ",", quotechar="'", quoting=csv.QUOTE_MINIMAL)
-		writer.writerow(["num_simulations", str(num_simulations)])
-		writer.writerow(["simulation_duration", str(simulation_duration)])
-		writer.writerow(["success_base", str(FeeParams["SUCCESS_BASE"])])
-		writer.writerow(["success_rate", str(FeeParams["SUCCESS_RATE"])])
-		writer.writerow(["HONEST_PAYMENT_EVERY_SECONDS", str(PaymentFlowParams["HONEST_PAYMENT_EVERY_SECONDS"])])
-		writer.writerow(["PROB_NEXT_CHANNEL_LOW_BALANCE", str(PaymentFlowParams["PROB_NEXT_CHANNEL_LOW_BALANCE"])])
-		writer.writerow(["JAM_DELAY", str(JammingParams["JAM_DELAY"])])
-		writer.writerow(["JAM_AMOUNT", str(JammingParams["JAM_AMOUNT"])])
+		writer.writerow(["num_simulations", str(results["num_simulations"])])
+		writer.writerow(["simulation_duration", str(results["simulation_duration"])])
+		writer.writerow(["success_base", str(results["success_fee_base"])])
+		writer.writerow(["success_rate", str(results["success_fee_rate"])])
+		writer.writerow(["honest_payment_every_seconds", str(PaymentFlowParams["HONEST_PAYMENT_EVERY_SECONDS"])])
 		writer.writerow("")
 		writer.writerow([
-			"upfront_base_coeff", "upfront_rate_coeff",
-			"upfront_base", "upfront_rate",
-			"num_payments_honest", "num_failed_honest", "share_failed",
+			"upfront_base_coeff",
+			"upfront_rate_coeff",
+			"num_honest_payments",
 			"num_jams",
-			"h_snd_revenue",
-			"h_snd_upfront_share",
-			"j_snd_revenue",
-			"j_snd_upfront_share",
-			"h_rtr_revenue",
-			"h_rtr_upfront_share",
-			"j_rtr_revenue",
-			"j_rtr_upfront_share",
-			"h_rcv_revenue",
-			"h_rcv_upfront_share",
-			"j_rcv_revenue",
-			"j_rcv_upfront_share",
-			"j_attack_cost"])
-		num_parameter_sets = len(UPFRONT_BASE_COEFF_RANGE) * len(UPFRONT_RATE_COEFF_RANGE)
-		i = 1
-		print("Upfront base coeff in", UPFRONT_BASE_COEFF_RANGE)
-		print("Upfront rate coeff in", UPFRONT_RATE_COEFF_RANGE)
-		for upfront_base_coeff in UPFRONT_BASE_COEFF_RANGE:
-			for upfront_rate_coeff in UPFRONT_RATE_COEFF_RANGE:
-				print("\nParameter combination", i ,"of", num_parameter_sets)
-				i += 1
-				upfront_base = upfront_base_coeff * FeeParams["SUCCESS_BASE"]
-				upfront_rate = upfront_rate_coeff * FeeParams["SUCCESS_RATE"]
-				def upfront_fee_function(a):
-					return generic_fee_function(a, base=upfront_base, rate=upfront_rate)
-				for node in jamming_route + honest_route:
-					node.upfront_fee_function = upfront_fee_function
-				# jamming revenue is constant ONLY if PROB_NEXT_CHANNEL_LOW_BALANCE = 0
-				# that's why we must average across experiments both for jamming and honest cases
-				no_failures = PaymentFlowParams["PROB_NEXT_CHANNEL_LOW_BALANCE"] == 0
-				print("Simulating jamming scenario")
-				(
-					sender_revenue_j, router_revenue_j, receiver_revenue_j, 
-					sender_upfront_revenue_shares_j, router_upfront_revenue_shares_j, receiver_upfront_revenue_shares_j,
-					num_p_j, num_f_j
-					) = average_result_values(jamming_route, num_simulations, simulation_duration, no_failures)
-				assert(num_p_j == num_f_j)
-				attack_cost_j = sender_revenue_j + receiver_revenue_j
-				print("Simulating honest scenario")
-				(
-					sender_revenue_h, router_revenue_h, receiver_revenue_h, 
-					sender_upfront_revenue_shares_h, router_upfront_revenue_shares_h, receiver_upfront_revenue_shares_h,
-					num_p_h, num_f_h
-					) = average_result_values(honest_route, num_simulations, simulation_duration)
-				share_failed_h = num_f_h/num_p_h
-				print("\nOn average per simulation (honest):", 
-					num_p_h, "payments,",
-					num_f_h, "(", round(num_f_h/num_p_h,2), ") of them failed.")
-				print("On average per simulation (jamming):", 
-					num_p_j, "payments,",
-					num_f_j, "of them failed.")
-				#print("Sender's revenue (honest, jamming):	", sender_revenue_h, sender_revenue_j)
-				#print("Router's revenue (honest, jamming):	", router_revenue_h, router_revenue_j)
-				#print("Receiver's revenue (honest, jamming):	", receiver_revenue_h, receiver_revenue_j)
-				writer.writerow([
-					upfront_base_coeff, 
-					upfront_rate_coeff,
-					np.format_float_positional(upfront_base),
-					# due to rounding, upfront_rate may take the form like
-					# 0.0000005000000000000001
-					# let's round it to 12 decimal points
-					np.format_float_positional(round(upfront_rate,12)),
-					num_p_h,
-					num_f_h,
-					share_failed_h,
-					num_p_j,
-					sender_revenue_h,
-					sender_upfront_revenue_shares_h,
-					sender_revenue_j,
-					sender_upfront_revenue_shares_j,
-					router_revenue_h,
-					router_upfront_revenue_shares_h,
-					router_revenue_j,
-					router_upfront_revenue_shares_j,
-					receiver_revenue_h,
-					receiver_upfront_revenue_shares_h,
-					receiver_revenue_j,
-					receiver_upfront_revenue_shares_j,
-					attack_cost_j
-					])
+			"a_h_revenue",
+			"a_j_revenue",
+			"b_h_revenue",
+			"b_j_revenue",
+			"c_h_revenue",
+			"c_j_revenue",
+			"d_h_revenue",
+			"d_j_revenue"
+			])
+		for result in results["results"]:
+			writer.writerow([
+				result["upfront_base_coeff"],
+				result["upfront_rate_coeff"],
+				result["num_honest_payments"],
+				result["num_jams"],
+				result["revenues"]["honest"]["Alice"],
+				result["revenues"]["jamming"]["Alice"],
+				result["revenues"]["honest"]["Bob"],
+				result["revenues"]["jamming"]["Bob"],
+				result["revenues"]["honest"]["Charlie"],
+				result["revenues"]["jamming"]["Charlie"],
+				result["revenues"]["honest"]["Dave"],
+				result["revenues"]["jamming"]["Dave"]
+				])
+
+def run_all_simulations(simulation_duration, num_simulations,
+	upfront_base_coeff_range, upfront_rate_coeff_range):
+	ln_model = LNModel(snapshot_json, default_num_slots = ProtocolParams["NUM_SLOTS"])
+	results = run_simulation_series(ln_model, upfront_base_coeff_range, upfront_rate_coeff_range,
+		simulation_duration, num_simulations)
+	all_results = {
+	"simulation_duration": simulation_duration,
+	"num_simulations": num_simulations,
+	"success_fee_base": SUCCESS_FEE_BASE,
+	"success_fee_rate": SUCCESS_FEE_RATE,
+	"no_balance_failures": NO_BALANCE_FAILURES,
+	"keep_receiver_upfront_fee": KEEP_RECEIVER_UPFRONT_FEE,
+	"honest_payment_every_seconds": PaymentFlowParams["HONEST_PAYMENT_EVERY_SECONDS"],
+	"results": sorted(results, key = lambda d: (d["upfront_base_coeff"], d["upfront_rate_coeff"]), reverse = False)
+	}
+	return all_results
 
 
-COMMON_RANGE = [0, 0.001, 0.002, 0.003]
-
-# upfront base fee / fee rate it this many times higher than success-case counterparts
-UPFRONT_BASE_COEFF_RANGE = COMMON_RANGE
-UPFRONT_RATE_COEFF_RANGE = COMMON_RANGE
-
+DEFAULT_UPFRONT_BASE_COEFF_RANGE = [0, 0.001, 0.002, 0.005, 0.01]
+DEFAULT_UPFRONT_RATE_COEFF_RANGE = [0, 0.1, 0.2, 0.5, 1]
 
 def main():
 	parser = argparse.ArgumentParser()
-	parser.add_argument("--num_simulations", default=10, type=int,
-		help="The number of simulation runs per parameter combinaiton.")
 	parser.add_argument("--simulation_duration", default=60, type=int,
 		help="Simulation duration in seconds.")
+	parser.add_argument("--num_simulations", default=10, type=int,
+		help="The number of simulation runs per parameter combinaiton.")
+	parser.add_argument("--upfront_base_coeff_range",
+		nargs="*",
+		type=float,
+		default=DEFAULT_UPFRONT_BASE_COEFF_RANGE,
+		help="A list of values for upfront base fee coefficient.")
+	parser.add_argument("--upfront_rate_coeff_range",
+		nargs="*",
+		type=float,
+		default=DEFAULT_UPFRONT_RATE_COEFF_RANGE,
+		help="A list of values for upfront base fee coefficient.")
 	parser.add_argument("--seed", type=int,
 		help="Seed for randomness initialization.")
 	args = parser.parse_args()
@@ -252,14 +235,15 @@ def main():
 		random.seed(args.seed)
 		np.random.seed(args.seed)
 
-	start_time = time.time()
-	run_simulations(args.num_simulations, args.simulation_duration)
-	end_time = time.time()
+	start_time = time()
+	all_results = run_all_simulations(args.simulation_duration, args.num_simulations,
+		args.upfront_base_coeff_range, args.upfront_rate_coeff_range)
+	end_time = time()
 	running_time = end_time - start_time
-
+	results_to_json_file(all_results, str(int(end_time)))
+	results_to_csv_file(all_results, str(int(end_time)))
 	print("\nRunning time (min):", round(running_time / 60, 1))
 
 
 if __name__ == "__main__":
-
 	main()

@@ -1,0 +1,37 @@
+{
+   "channels": [
+      {
+         "source": "Alice",
+         "destination": "Bob",
+         "short_channel_id": "ABx0",
+         "satoshis": 1000000,
+         "active": true,
+         "base_fee_millisatoshi": 6000,
+         "fee_per_millionth": 60000,
+         "base_fee_millisatoshi_upfront": 5000,
+         "fee_per_millionth_upfront": 50000
+      },
+      {
+         "source": "Bob",
+         "destination": "Charlie",
+         "short_channel_id": "BCx0",
+         "satoshis": 1000000,
+         "active": true,
+         "base_fee_millisatoshi": 4000,
+         "fee_per_millionth": 40000,
+         "base_fee_millisatoshi_upfront": 3000,
+         "fee_per_millionth_upfront": 30000
+      },
+      {
+         "source": "Charlie",
+         "destination": "Dave",
+         "short_channel_id": "CDx0",
+         "satoshis": 1000000,
+         "active": true,
+         "base_fee_millisatoshi": 2000,
+         "fee_per_millionth": 20000,
+         "base_fee_millisatoshi_upfront": 1000,
+         "fee_per_millionth_upfront": 10000
+      }
+   ]
+}

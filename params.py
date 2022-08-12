@@ -1,8 +1,15 @@
 from math import log
+from numpy.random import exponential, lognormal
 
 K = 1000
 M = K * K
 
+def honest_amount_function():
+	return lognormal(mean=PaymentFlowParams["AMOUNT_MU"], sigma=PaymentFlowParams["AMOUNT_SIGMA"])
+def honest_proccesing_delay_function():
+	return PaymentFlowParams["MIN_DELAY"] + exponential(PaymentFlowParams["EXPECTED_EXTRA_DELAY"])
+def honest_generation_delay_function():
+	return exponential(PaymentFlowParams["HONEST_PAYMENT_EVERY_SECONDS"])
 
 PaymentFlowParams = {
 	# Amounts follow log-normal distribution
@@ -23,8 +30,8 @@ PaymentFlowParams = {
 	"HONEST_PAYMENT_EVERY_SECONDS" : 10,
 
 	# the probability that a payment fails at a hop
-	# because the _next_ channel can't handle it (e.g., low balance)
-	"PROB_NEXT_CHANNEL_LOW_BALANCE" : 0.05,
+	# because the _next_ channel can't handle it (e.channel_graph., low balance)
+	#"PROB_NEXT_CHANNEL_LOW_BALANCE" : 0.05,
 }
 
 ProtocolParams = {
@@ -43,6 +50,7 @@ ProtocolParams = {
 	"NUM_SLOTS" : 483
 }
 
+
 FeeParams = {
 	# LN implementations use the following default values for base / rate:
 	# LND: 1 sat / 1 per million
@@ -57,13 +65,4 @@ FeeParams = {
 	
 	"SUCCESS_BASE" : 1,
 	"SUCCESS_RATE" : 5 / M
-}
-
-
-JammingParams = {
-	# nodes may set stricter dust limits
-	"JAM_AMOUNT" : ProtocolParams["DUST_LIMIT"],
-	"JAM_DELAY" : PaymentFlowParams["MIN_DELAY"] + 2 * PaymentFlowParams["EXPECTED_EXTRA_DELAY"],
-	"JAM_BATCH_SIZE" : ProtocolParams["NUM_SLOTS"]
-
 }
