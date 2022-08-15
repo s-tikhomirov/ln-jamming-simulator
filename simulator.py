@@ -64,7 +64,6 @@ class Simulator:
 	'''
 
 	def __init__(self, ln_model):
-		self.time = 0
 		self.ln_model = ln_model
 
 	def execute_schedule(self,

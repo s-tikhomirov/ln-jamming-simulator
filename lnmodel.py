@@ -25,10 +25,11 @@ def get_channel_graph_from_json(snapshot_json, default_num_slots = TEST_NUM_SLOT
 		capacity = cd["satoshis"]
 		src, dst = cd["source"], cd["destination"]
 		direction = src < dst
-		base_fee_success = cd["base_fee_millisatoshi"] / K
-		fee_rate_success = cd["fee_per_millionth"] / M
-		base_fee_upfront = cd["base_fee_millisatoshi_upfront"] / K if "base_fee_millisatoshi_upfront" in cd else 0
-		fee_rate_upfront = cd["fee_per_millionth_upfront"] / M if "fee_per_millionth_upfront" in cd else 0
+		# Fees may be set manually later in testing snapshots
+		base_fee_success = cd["base_fee_millisatoshi"] / K 			if "base_fee_millisatoshi" in cd else None
+		fee_rate_success = cd["fee_per_millionth"] / M 				if "fee_per_millionth" in cd else None
+		base_fee_upfront = cd["base_fee_millisatoshi_upfront"] / K 	if "base_fee_millisatoshi_upfront" in cd else None
+		fee_rate_upfront = cd["fee_per_millionth_upfront"] / M 		if "fee_per_millionth_upfront" in cd else None
 		cd = ChannelDirection(
 			is_enabled = cd["active"],
 			num_slots = default_num_slots,
@@ -166,6 +167,10 @@ class LNModel:
 				#print("Unexpected fee type! Can't set fee.")
 				pass
 
+	def set_fee_function_for_all(self, revenue_type, base, rate):
+		for (node_1, node_2) in self.channel_graph.edges():
+			self.set_fee_function(node_1, node_2, revenue_type, base, rate)
+
 	def set_num_slots(self, node_1, node_2, num_slots):
 		# Resize the slots queue to a num_slots.
 		# Note: by default, this erases existing in-flight HTLCs.
@@ -175,7 +180,8 @@ class LNModel:
 		# assume there is only one channel in this hop
 		assert(len(ch_dict.keys()) == 1)
 		ch_dir = next(iter(ch_dict.values()))["directions"][direction]
-		ch_dir.set_num_slots(num_slots)
+		if ch_dir is not None:
+			ch_dir.set_num_slots(num_slots)
 
 	def report_revenues(self):
 		print("\n\n*** Revenues ***")
