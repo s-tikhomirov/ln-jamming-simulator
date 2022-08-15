@@ -1,5 +1,8 @@
 from payment import Payment
-from math import ceil
+from lnmodel import LNModel
+from simulator import Simulator
+
+from math import ceil, isclose
 import pytest
 
 @pytest.fixture
@@ -46,3 +49,75 @@ def test_manual_payment_creation(example_payment_upfront_fee_function, example_p
 	assert(p2.body 			== 110)
 	assert(p2.success_fee 	== 21)
 	assert(p2.upfront_fee 	== 14)
+
+
+
+@pytest.fixture
+def example_snapshot_json():
+	channel_ABx0 = {
+		"source": "Alice",
+		"destination": "Bob",
+		"short_channel_id": "ABx0",
+		"satoshis": 1000000,
+		"active": True,
+		"base_fee_millisatoshi": 5000,
+		"fee_per_millionth": 50000,
+		"base_fee_millisatoshi_upfront": 2000,
+		"fee_per_millionth_upfront": 20000
+		}
+	channel_BCx0 = {
+		"source": "Bob",
+		"destination": "Charlie",
+		"short_channel_id": "BCx0",
+		"satoshis": 1000000,
+		"active": True,
+		"base_fee_millisatoshi": 5000,
+		"fee_per_millionth": 50000,
+		"base_fee_millisatoshi_upfront": 2000,
+		"fee_per_millionth_upfront": 20000
+		}
+	channel_CDx0 = {
+		"source": "Charlie",
+		"destination": "Dave",
+		"short_channel_id": "CDx0",
+		"satoshis": 1000000,
+		"active": True,
+		"base_fee_millisatoshi": 5000,
+		"fee_per_millionth": 50000,
+		"base_fee_millisatoshi_upfront": 2000,
+		"fee_per_millionth_upfront": 20000
+	}
+	snapshot_json = {"channels" : [channel_ABx0, channel_BCx0, channel_CDx0]}
+	return snapshot_json
+
+
+@pytest.fixture
+def example_ln_model(example_snapshot_json):
+	return LNModel(example_snapshot_json, default_num_slots = 2)
+
+@pytest.fixture
+def example_simulator(example_ln_model):
+	return Simulator(example_ln_model)
+
+def test_route_payment_creation(example_simulator):
+	sim = example_simulator
+	route = ["Alice", "Bob", "Charlie", "Dave"]
+	p = sim.create_payment(
+		route,
+		amount=100,
+		processing_delay=2,
+		desired_result=True,
+		enforce_dust_limit=False)
+	dsp = p.downstream_payment
+	ddsp = dsp.downstream_payment
+	assert(p.amount == 130.5)
+	assert(p.success_fee == 20.5)
+	assert(p.body == 110)
+	assert(isclose(p.upfront_fee, 12.81))
+	assert(dsp.amount == 110)
+	assert(dsp.body == 100)
+	assert(dsp.success_fee == 10)
+	assert(dsp.upfront_fee == 8.2)
+	assert(ddsp.amount == ddsp.body == 100)
+	assert(ddsp.success_fee == 0)
+	assert(ddsp.upfront_fee == 4)
