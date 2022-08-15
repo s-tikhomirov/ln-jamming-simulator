@@ -50,11 +50,11 @@ SUCCESS_FEE_BASE = FeeParams["SUCCESS_BASE"]
 SUCCESS_FEE_RATE = FeeParams["SUCCESS_RATE"]
 NUM_SLOTS = ProtocolParams["NUM_SLOTS"]
 
-NO_BALANCE_FAILURES = True
+NO_BALANCE_FAILURES = False
 KEEP_RECEIVER_UPFRONT_FEE = True
 
 def run_simulation_honest(ln_model, simulation_duration, num_simulations, 
-	no_balance_failures=NO_BALANCE_FAILURES, keep_receiver_upfront_fee=KEEP_RECEIVER_UPFRONT_FEE):
+	no_balance_failures, keep_receiver_upfront_fee):
 	print("  Strating honest")
 	sim = Simulator(ln_model)
 	tmp_revenues = {"Alice" : [], "Bob" : [], "Charlie": [], "Dave": []}
@@ -88,7 +88,7 @@ def run_simulation_honest(ln_model, simulation_duration, num_simulations,
 	return num_events, revenues
 
 def run_simulation_jamming(ln_model, simulation_duration, num_simulations,
-	no_balance_failures=NO_BALANCE_FAILURES, keep_receiver_upfront_fee=KEEP_RECEIVER_UPFRONT_FEE):
+	no_balance_failures, keep_receiver_upfront_fee):
 	print("  Strating jamming")
 	sim = Simulator(ln_model)
 	tmp_revenues = {"Alice" : [], "Bob" : [], "Charlie": [], "Dave": []}
@@ -121,22 +121,26 @@ def run_simulation_jamming(ln_model, simulation_duration, num_simulations,
 		revenues[node] = mean(tmp_revenues[node])
 	return num_events, revenues
 
-def run_simulation_pair(ln_model, upfront_base_coeff, upfront_rate_coeff, simulation_duration, num_simulations):
+def run_simulation_pair(ln_model, upfront_base_coeff, upfront_rate_coeff,
+	simulation_duration, num_simulations,
+	no_balance_failures, keep_receiver_upfront_fee):
 	print("\nStarting simulation pair")
 	for node_1, node_2 in (("Alice", "Bob"), ("Bob", "Charlie"), ("Charlie", "Dave")):
 		ln_model.set_fee_function(node_1, node_2, RevenueType.UPFRONT, SUCCESS_FEE_BASE * upfront_base_coeff, SUCCESS_FEE_RATE * upfront_rate_coeff)
 		ln_model.set_fee_function(node_1, node_2, RevenueType.SUCCESS, SUCCESS_FEE_BASE, SUCCESS_FEE_RATE)
 	revenues = {"honest" : {}, "jamming": {}}
-	num_honest_payments, revenues["honest"] = run_simulation_honest(ln_model, simulation_duration, num_simulations)
-	num_jams, revenues["jamming"] = run_simulation_jamming(ln_model, simulation_duration, num_simulations)
+	num_honest_payments, revenues["honest"] = run_simulation_honest(ln_model, simulation_duration, num_simulations, no_balance_failures, keep_receiver_upfront_fee)
+	num_jams, revenues["jamming"] = run_simulation_jamming(ln_model, simulation_duration, num_simulations, no_balance_failures, keep_receiver_upfront_fee)
 	return num_honest_payments, num_jams, revenues
 
-def run_simulation_series(ln_model, upfront_base_coeff_range, upfront_rate_coeff_range, simulation_duration, num_simulations):
+def run_simulation_series(ln_model, upfront_base_coeff_range, upfront_rate_coeff_range, simulation_duration, num_simulations,
+	no_balance_failures, keep_receiver_upfront_fee):
 	results = []
 	for upfront_base_coeff in upfront_base_coeff_range:
 		for upfront_rate_coeff in upfront_rate_coeff_range:
 			num_honest_payments, num_jams, revenues = \
-			run_simulation_pair(ln_model, upfront_base_coeff, upfront_rate_coeff, simulation_duration, num_simulations)
+			run_simulation_pair(ln_model, upfront_base_coeff, upfront_rate_coeff, simulation_duration, num_simulations,
+				no_balance_failures, keep_receiver_upfront_fee)
 			result = {
 			"upfront_base_coeff": upfront_base_coeff,
 			"upfront_rate_coeff": upfront_rate_coeff,
@@ -157,6 +161,8 @@ def results_to_csv_file(results, timestamp):
 		writer.writerow(["simulation_duration", str(results["simulation_duration"])])
 		writer.writerow(["success_base", str(results["success_fee_base"])])
 		writer.writerow(["success_rate", str(results["success_fee_rate"])])
+		writer.writerow(["no_balance_failures", NO_BALANCE_FAILURES])
+		writer.writerow(["keep_receiver_upfront_fee", KEEP_RECEIVER_UPFRONT_FEE])
 		writer.writerow(["honest_payment_every_seconds", str(PaymentFlowParams["HONEST_PAYMENT_EVERY_SECONDS"])])
 		writer.writerow("")
 		writer.writerow([
@@ -190,10 +196,11 @@ def results_to_csv_file(results, timestamp):
 				])
 
 def run_all_simulations(simulation_duration, num_simulations,
+	no_balance_failures, keep_receiver_upfront_fee,
 	upfront_base_coeff_range, upfront_rate_coeff_range):
 	ln_model = LNModel(snapshot_json, default_num_slots = ProtocolParams["NUM_SLOTS"])
 	results = run_simulation_series(ln_model, upfront_base_coeff_range, upfront_rate_coeff_range,
-		simulation_duration, num_simulations)
+		simulation_duration, num_simulations, no_balance_failures, keep_receiver_upfront_fee)
 	all_results = {
 	"simulation_duration": simulation_duration,
 	"num_simulations": num_simulations,
@@ -216,6 +223,8 @@ def main():
 		help="Simulation duration in seconds.")
 	parser.add_argument("--num_simulations", default=10, type=int,
 		help="The number of simulation runs per parameter combinaiton.")
+	parser.add_argument('--no_balance_failures', dest='no_balance_failures', default=False, action='store_true')
+	parser.add_argument('--keep_receiver_upfront_fee', dest='keep_receiver_upfront_fee', default=True, action='store_true')
 	parser.add_argument("--upfront_base_coeff_range",
 		nargs="*",
 		type=float,
@@ -237,6 +246,7 @@ def main():
 
 	start_time = time()
 	all_results = run_all_simulations(args.simulation_duration, args.num_simulations,
+		args.no_balance_failures, args.keep_receiver_upfront_fee,
 		args.upfront_base_coeff_range, args.upfront_rate_coeff_range)
 	end_time = time()
 	running_time = end_time - start_time

@@ -35,6 +35,10 @@ def body_for_amount(target_amount, upfront_fee_function, precision=1, max_steps=
 
 
 class InFlightHtlc:
+	'''
+		An in-flight HTLC.
+		As we don't model balances, an HTLC only contrains success-case fee.
+	'''
 
 	def __init__(self, payment_id, success_fee, desired_result):
 		self.payment_id = payment_id
@@ -53,12 +57,13 @@ class InFlightHtlc:
 
 
 class Simulator:
+	'''
+		The Simulator class executes a Schedule of Events.
+		For each Event, it builds a route, creates a Payment, and routes it.
+		The resulting changes in revenues are written into the LNModel.
+	'''
 
 	def __init__(self, ln_model):
-		# Parse a LN JSON into networkX representation.
-		# Assign node IDs and revenues to each node.
-		# Assign instances of Channel to each edge according to topology.
-		# "open" attacker's channels manually if needed
 		self.time = 0
 		self.ln_model = ln_model
 
@@ -71,6 +76,38 @@ class Simulator:
 		no_balance_failures=False,
 		subtract_last_hop_upfront_fee_for_honest_payments=True,
 		keep_receiver_upfront_fee=False):
+		'''
+			Parameters:
+			- schedule
+				A Schedule to execute.
+
+			- simulation_end
+				When to end the simulation.
+				Simulation end is different from the timestamp of the last event (which is earlier).
+				It determines which HTLCs to finalize after all Events are processed.
+
+			- target_node_pair
+				Build routes such that they pass through this pair of nodes, in this order (used in jamming).
+
+			- jam_with_insertion
+				Insert new jam Events into Schedule while processing existing Events, depending on jam results.
+
+			- enforce_dust_limit
+				Not allow creating Payments with amount smaller than ProtocolParams["DUST_LIMIT"].
+
+			- no_balance_failures
+				Disable balance-based failures. Otherwise, fail with probability (amount / capacity).
+
+			- subtract_last_hop_upfront_fee_for_honest_payments
+				Apply body_for_amount at Payment construction for honest payment.
+				Jams are always constructed without such adjustment to stay above the dust limit at all hops.
+			
+			- keep_receiver_upfront_fee
+				Not nullify receiver's upfront fee revenue.
+				If amount had been adjusted at Payment construction, the receiver's upfront fee is part of payment.
+				Hence, technically this is not a revenue.
+				However, it may be useful to leave it to check for inveriants in tests (sum of all fees == 0).
+		'''
 		now, num_events = 0, 0
 		#print("Current time:", now)
 		while not schedule.schedule.empty():
@@ -99,9 +136,6 @@ class Simulator:
 			if is_jam or not subtract_last_hop_upfront_fee_for_honest_payments:
 				receiver_amount = event.amount
 			else:
-				# honest senders subtract last hop upfront fee
-				# jammers add upfront fees on top of last hop amount
-				# to ensure HTLC isn't lower than dust limit
 				#print("Subtracting last-hop upfront fee from amount")
 				receiver_amount = self.get_adjusted_amount(event.amount, route)
 			#print("Receiver will get:", event.amount, "/ in payment body:", receiver_amount)
@@ -111,13 +145,11 @@ class Simulator:
 			if is_jam and jam_with_insertion:
 				if reached_receiver:
 					#print("Jam reached receiver")
-					# We just put the same jam back into the queue again!
-					# No need to pass around jam amount and jam processing delay.
 					#print("Putting this jam into schedule again:", now, event)
 					schedule.put_event(now, event)
 				elif target_node_pair is not None:
 					router_1, router_2 = target_node_pair
-					later_time = now + event.processing_delay
+					next_batch_time = now + event.processing_delay
 					#print("Failed at", erring_node)
 					if erring_node == router_2:
 						#print("Jam failed at router_2: a balance failure!")
@@ -132,11 +164,11 @@ class Simulator:
 						# TODO: implement more complex heuristics of the target being truly jammed.
 						# One option: try a few times here, if all of them fail, it's likely jammed.
 						# But we can never be certain.
-						#print("Putting another jam for later:", later_time, event)
-						schedule.put_event(later_time, event)
+						#print("Putting another jam for next batch:", next_batch_time, event)
+						schedule.put_event(next_batch_time, event)
 					else:
 						#print("Failed at sender - ... ")
-						# make multiple routing attempts?
+						# TODO: make multiple routing attempts?
 						pass
 			num_events += 1
 		#print("Schedule executed.")
@@ -150,15 +182,17 @@ class Simulator:
 		return num_events
 
 	def get_adjusted_amount(self, amount, route):
+		'''
+			Calculate the payment body, given what the receiver would receive and last hop fees.
+			Note: this assumes the last hop only has one channel!
+		'''
 		# calculate the final receiver amount for a hop
 		# which means - subtracting last-hop upfront fee from the given amount
 		assert(len(route) >= 2)
 		receiver, pre_receiver = route[-1], route[-2]
 		direction = (pre_receiver < receiver)
 		# TODO: think how to choose a channel from the sender's point of view
-		# calculate fee for given amount
 		# choose last-hop channel with lowest fee?
-		# for testing, assume just one channel
 		last_channels_dict = self.ln_model.channel_graph.get_edge_data(receiver, pre_receiver)
 		assert(len(last_channels_dict) == 1)
 		last_hop_ch_dir = next(iter(last_channels_dict.values()))["directions"][direction]
@@ -166,7 +200,26 @@ class Simulator:
 		return receiver_amount
 
 	def create_payment(self, route, amount, processing_delay, desired_result, enforce_dust_limit):
-		# create a Payment s.t. fee policies are met and receiver gets amount
+		'''
+			Create a Payment.
+
+			- route
+				A list of nodes for the payment to go through.
+
+			- amount
+				The amount for the receiver to receive.
+
+			- processing_delay
+				How much delay an HTLC created within this payment incurs, if not immediately failed.
+				This delay is the same on all hops.
+
+			- desired_result
+				Distinguishes honest payments (True) from jams (False).
+
+			- enforce_dust_limit
+				Throw an assertion if at any step payment amount is less than the dust limit.
+
+		'''
 		#print("Creating a payment for route", route, "and amount", amount)
 		p = None
 		u_nodes, d_nodes = route[:-1], route[1:]
@@ -189,6 +242,10 @@ class Simulator:
 		return p
 
 	def apply_htlc(self, resolution_time, htlc, u_node, d_node, now):
+		'''
+			Resolve an HTLC. If (and only if) its desired result is True,
+			pass success-case fee from the upstream node to the downstream node.
+		'''
 		assert(resolution_time <= now)	# must have been checked before popping
 		if htlc.desired_result == True:
 			#print("Applying", htlc)
@@ -197,29 +254,25 @@ class Simulator:
 
 	def handle_payment(self, payment, route, now, no_balance_failures, keep_receiver_upfront_fee):
 		#print("HANDLING PAYMENT", payment.id)
-
 		p = payment
-		u_nodes, d_nodes = route[:-1], route[1:]
-		erring_node = None
-
-		# store in-flight htlcs here until reached_receiver becomes known
+		u_nodes, d_nodes, erring_node = route[:-1], route[1:], None
+		# A temporary data structure to store HTLCs before the payment reaches the receiver
+		# If the payment fails at a routing node, we don't remember in-flight HTLCs.
 		tmp_cid_to_htlcs = dict()
-
 		for u_node, d_node in list(zip(u_nodes, d_nodes)):
-
+			# Choose a channel in the required direction
 			channels_dict = self.ln_model.channel_graph.get_edge_data(u_node, d_node)
-			# select or free a slot, fail if no slots
-			# TODO: this doesn't have to be the same function as on payment creation
-			# but if it is not, we must check HERE that the payment pays enough fees
-			# (or simplify this aspect somehow)
 			direction = (u_node < d_node)
 			chosen_cid, chosen_ch_dir = lowest_fee_enabled_channel(channels_dict, p.amount, direction)
 			#print("Chose channel to forward:", chosen_cid)
 			#print(chosen_ch_dir)
 			
+			# TODO: channel selection functions may be different at payment creation and handling.
+			# Check here that the payment pays enough fees?
+
+			# Model balance failures randomly, depending on the amount and channel capacity
 			if not no_balance_failures:
-				# flip coin: fail because of low balance?
-				# FIXME: the router doesn't try another channel if one fails, does it?
+				# The channel must accommodate the amount plus the upfront fee
 				amount_plus_upfront_fee = p.amount + p.upfront_fee
 				prob_low_balance = amount_plus_upfront_fee / channels_dict[chosen_cid]["capacity"]
 				#print("Probability of balance failure:", prob_low_balance)
@@ -228,35 +281,39 @@ class Simulator:
 					erring_node = u_node
 					break
 						
-			# check if there are free slots
+			# Check if there is a free slot
 			success, resolution_time, released_htlc = chosen_ch_dir.ensure_free_slot(now)
 			if released_htlc is not None:
+				# Resolve the outdated HTLC we released to free a slot for the current payment
 				#print("Popped htlc from", u_node, d_node, ":", resolution_time, released_htlc)
 				self.apply_htlc(resolution_time, released_htlc, u_node, d_node, now)
 			if not success:
+				# All slots are busy, and there are no outdated HTLCs that could be released
 				#print("No free slots, failing payment")
 				erring_node = u_node
 				break
 
-			# account for upfront fee
+			# Account for upfront fees
 			self.ln_model.subtract_revenue(	u_node, RevenueType.UPFRONT, p.upfront_fee)
 			is_last_hop = d_node == route[-1]
 			if not is_last_hop or keep_receiver_upfront_fee:
 				self.ln_model.add_revenue(		d_node, RevenueType.UPFRONT, p.upfront_fee)
 
-			# construct a htlc
+			# Construct an HTLC to be stored in a temporary dictionary until we know if receiver is reached
 			in_flight_htlc = InFlightHtlc(p.id, p.success_fee, p.desired_result)
 			#print("Constructed htlc:", in_flight_htlc)
 			tmp_cid_to_htlcs[(u_node, d_node)] = chosen_cid, direction, now + p.processing_delay, in_flight_htlc
 
+			# Unwrap the next onion level for the next hop 
 			p = p.downstream_payment
 
-		# reached receiver means we unwrapped the last payment layer
+		# If the next payment is None, it means we've reached the receiver
 		reached_receiver = p is None
 		#print("Reached receiver:", reached_receiver)
 		#print("erring_node:", erring_node)
 		#print("Temporarily saved htlcs:", tmp_cid_to_htlcs)
 
+		# For each channel in the route, store HTLCs for the current payment
 		if reached_receiver:
 			for u_node, d_node in list(zip(u_nodes, d_nodes)):
 				if (u_node, d_node) in tmp_cid_to_htlcs:
@@ -268,8 +325,10 @@ class Simulator:
 		return reached_receiver, erring_node
 		
 	def finalize_in_flight_htlcs(self, now):
-		# apply all in-flight htlcs with timestamp < now
-		# this is done after the simulation is complete
+		'''
+			Apply all in-flight htlcs with timestamp < now.
+			This is done after the simulation is complete.
+		'''
 		for (node_a, node_b) in self.ln_model.channel_graph.edges():
 			channels_dict = self.ln_model.channel_graph.get_edge_data(node_a, node_b)
 			for cid in channels_dict:

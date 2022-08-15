@@ -9,7 +9,6 @@ from params import K, M
 from enum import Enum
 
 TEST_NUM_SLOTS = 2
-PERCENT = 1 / 100
 
 class RevenueType(Enum):
 	UPFRONT = "upfront_revenue"
@@ -26,7 +25,6 @@ def get_channel_graph_from_json(snapshot_json, default_num_slots = TEST_NUM_SLOT
 		capacity = cd["satoshis"]
 		src, dst = cd["source"], cd["destination"]
 		direction = src < dst
-		# TODO: should we do all accounting in millisatoshis?
 		base_fee_success = cd["base_fee_millisatoshi"] / K
 		fee_rate_success = cd["fee_per_millionth"] / M
 		base_fee_upfront = cd["base_fee_millisatoshi_upfront"] / K if "base_fee_millisatoshi_upfront" in cd else 0
@@ -54,9 +52,10 @@ def get_channel_graph_from_json(snapshot_json, default_num_slots = TEST_NUM_SLOT
 	return g
 
 def get_routing_graph_from_json(snapshot_json):
-	# get a DIRECTED graph from the same JSON
-	# where each edge corresponds to a channel direction
-	# we only use this directed graph for routing
+	# Get a DIRECTED MULTI-graph from the same JSON for routing.
+	# Each edge corresponds to an enabled (i.e., "active") channel direction.
+	# We only parse cid and capacity (it's relevant for routing).
+	# All other attributes (fee functions, revenues) are stored in the channel graph.
 	g = nx.MultiDiGraph()
 	for cd in snapshot_json["channels"]:
 		if cd["active"] == False:
@@ -76,9 +75,8 @@ class LNModel:
 	def __init__(self, snapshot_json, default_num_slots=TEST_NUM_SLOTS):
 		self.channel_graph = get_channel_graph_from_json(snapshot_json, default_num_slots)
 		self.routing_graph = get_routing_graph_from_json(snapshot_json)
-		# for filtered graph views, add 5% to initial amount
-		# to account for (yet unknown) fees
-		self.capacity_filtering_safety_margin = 5 * PERCENT
+		# To filter graph views, add a safety margin to account for the (yet unknown) fees.
+		self.capacity_filtering_safety_margin = 0.05
 
 	def add_revenue(self, node, revenue_type, amount):
 		self.channel_graph.nodes[node][revenue_type.value] += amount
@@ -100,20 +98,16 @@ class LNModel:
 		return nx.subgraph_view(self.routing_graph, lambda _:True, filter_edges)
 
 	def get_routes(self, sender, receiver, amount):
-		# get routes iterator for a given amount from sender to receiver
-		# graph is pre-filtered to exclude channels with too low capacity
-		# we allocate a safety margin to fees when filtering
+		# A routes iterator for a given amount from sender to receiver
 		routing_graph = self.get_routing_graph_for_amount(
 			amount=(1 + self.capacity_filtering_safety_margin) * amount)
 		#print("Routing graph has nodes:", list(routing_graph.nodes()))
 		#print("Searching for route from", sender, "to", receiver, "for", amount)
-		ab_edge = self.channel_graph.get_edge_data(sender, receiver)
-		#print(ab_edge)
 		if sender not in routing_graph or receiver not in routing_graph:
-			#print("No route")
+			#print("No route - sender or receiver not in routing graph")
 			yield from ()
 		elif not nx.has_path(routing_graph, sender, receiver):
-			#print("No route - no path")
+			#print("No route - no path between sender and receiver")
 			yield from ()
 		else:
 			routes = nx.all_shortest_paths(routing_graph, sender, receiver)
@@ -138,10 +132,10 @@ class LNModel:
 			#print("No path from sender", sender, "to router_1", router)
 			yield from ()
 		elif not router_1 in routing_graph.predecessors(router_2):
-			#print("No big enough channel from", router_1, "to", router_2)
+			#print("No (big enough) channel from", router_1, "to", router_2)
 			yield from ()
 		elif not router_2 in routing_graph.predecessors(receiver):
-			#print("No big enough channel from", router_2, "to", receiver)
+			#print("No (big enough) channel from", router_2, "to", receiver)
 			yield from ()
 		else:
 			routes_to_router = nx.all_shortest_paths(routing_graph, sender, router_1)
@@ -153,14 +147,15 @@ class LNModel:
 				route = next(routes_to_router, None)
 
 	def set_fee_function(self, node_1, node_2, revenue_type, base, rate):
+		# Set a fee function of form f(a) = b + ra to the channel between node_1 and node_2.
+		# Note: we assume there is at most one channel between the nodes!
 		if not node_1 in self.channel_graph.neighbors(node_2):
 			#print("Can't set fee: no channel between", node_1, node_2)
 			pass
 		else:
 			ch_dict = self.channel_graph.get_edge_data(node_1, node_2)
-			# assume there is only one channel in this hop
-			assert(len(ch_dict.keys()) == 1)
 			direction = node_1 < node_2
+			assert(len(ch_dict.keys()) == 1)
 			ch_dir = next(iter(ch_dict.values()))["directions"][direction]
 			fee_function = partial(lambda b, r, a : b + r * a, base, rate)
 			if revenue_type == RevenueType.UPFRONT:
@@ -172,6 +167,9 @@ class LNModel:
 				pass
 
 	def set_num_slots(self, node_1, node_2, num_slots):
+		# Resize the slots queue to a num_slots.
+		# Note: by default, this erases existing in-flight HTLCs.
+		# (Which is OK as we use this to reset the graph between experiments.)
 		ch_dict = self.channel_graph.get_edge_data(node_1, node_2)
 		direction = (node_1 < node_2)
 		# assume there is only one channel in this hop

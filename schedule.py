@@ -29,8 +29,7 @@ class Event:
 
 class Schedule:
 	'''
-		A schedule of events (to-be payments)
-		to be executed by Simulator during a simulation
+		A schedule of Events (to-be payments) to be executed by a Simulator.
 	'''
 	def __init__(self):
 		self.schedule = PriorityQueue()
@@ -43,28 +42,43 @@ class Schedule:
 		payment_processing_delay_function,
 		payment_generation_delay_function,
 		scheduled_duration):
-		# Generate a list of payments to be processed in the experiment.
-		# The difference between honest payments and jams is reflected ONLY here, not in nodes!
-		# Desired_result is True for honest payments and False for jams.
-		# returns a list (priority queue?) of payments to be executed.
-		# for jamming: batches of payments with minimal (zero?) delays, then 7-sec delay
+		'''
+			- senders_list
+				Pick a sender uniformly from this list.
+
+			- receivers_list
+				Pick a receiver uniformly from this list.
+
+			- amount_function
+				A function to generate each next payment amount.
+
+			- payment_processing_delay_function
+				A function to generate each next processing delay (encoded within the payment).
+			
+			- payment_generation_delay_function
+				A function to generate a delay until the next Event in the Schedule.
+
+			- scheduled_duration
+				A timestamp at which to stop Schedule generation.
+				Note: this is not the same as the timestamp of the last Event.
+				(E.g., for scheduled_duration 30, the last event may be at timestamp 28.)
+		'''
 		t = 0
 		while t < scheduled_duration:
 			sender = choice(senders_list)
 			receiver = choice(receivers_list)
 			if sender == receiver:
 				continue
+			# whether to exclude last-hop upfront fee from amount or not,
+			# is decided on Payment construction stage later
 			amount = amount_function()
 			processing_delay = payment_processing_delay_function()
-			# exclude last-hop upfront fee is decided later, on Payment construction stage
-			# payment construction depends on route
-			# therefore we construct routes and Payment objects later
 			event = Event(sender, receiver, amount, processing_delay, desired_result)
 			self.put_event(t, event)
 			t += payment_generation_delay_function()
 
 	def put_event(self, event_time, event, current_time=-1):
-		# can't insert events that would execute in the past
+		# prevent inserting events from the past
 		assert(current_time < event_time)
 		self.schedule.put_nowait((event_time, event))
 
@@ -76,6 +90,8 @@ class Schedule:
 		return time, event
 
 	def get_all_events(self):
+		# Only used for printing while debugging.
+		# Note: this clears the queue!
 		timed_events = []
 		while not self.schedule.empty():
 			time, event = self.schedule.get_nowait()
@@ -89,7 +105,6 @@ class Schedule:
 		return self.schedule.empty()
 
 	def __repr__(self):
-		# NB: this clears the queue!
 		s = "\nSchedule:\n"
 		s += "\n".join([ str(str(e[0]) + "	" + str(e[1])) for e in self.get_all_events()])
 		return s

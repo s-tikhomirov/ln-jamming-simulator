@@ -12,12 +12,8 @@ class ChannelDirection:
 	'''
 		A ChannelDirection model Channel's forwarding process in one direction.
 		A ChannelDirection contains:
-		- slots: a list of htlcs (or None) of form:
-			(timestamp, in-flight-fee, actual_success)
-			Timestamp is when in-flight fee must move to one of the parties
-			depending on actual_success.
-			slots == None means the direction is disabled.
-			slots == [None, ..., None] means there are N free slots.
+		- is_enabled: True if this ch_dir forwards payments.
+		- slots: a PriorityQueue of HTLCs. Priority metric is the resolution time.
 		- success-case fee function
 		- upfront fee function
 	'''
@@ -32,6 +28,10 @@ class ChannelDirection:
 		self.slots = PriorityQueue(maxsize=num_slots)
 
 	def set_num_slots(self, num_slots, copy_existing_htlcs=False):
+		# Initialize slots to a PriorityQueue of a given maxsize.
+		# (An existing queue cannot be re-sized.)
+		# Optionally, copy over all HTLCs from the old queue.
+		# TODO: check that the new queue is larger than the old one if copy_existing_htlcs.
 		old_slots = self.slots
 		self.slots = PriorityQueue(maxsize=num_slots)
 		if copy_existing_htlcs:
@@ -40,11 +40,10 @@ class ChannelDirection:
 				self.slots.put_nowait((resolution_time, released_htlc))
 
 	def ensure_free_slot(self, current_timestamp):
-		# If slots are full, try to pop the earliest one.
-		# If the earliest one is after now, release it.
-		# Return success True / False and released htlc, if any.
-		# The htlc is to be handled by the caller
-		# (i.e., add revenue to nodes; Channel doesn't know about Nodes).
+		# Ensure there is a free slot.
+		# If the queue is full, check the timestamp of the earliest HTLC.
+		# If it is in the pase, pop the HTLC (it can be resolved).
+		# Return True / False and released HTLC, if any, with its timestamp.
 		success, resolution_time, released_htlc = False, None, None
 		if self.slots.full():
 			earliest_in_flight_timestamp = self.slots.queue[0][0]
@@ -59,7 +58,8 @@ class ChannelDirection:
 		return success, resolution_time, released_htlc
 
 	def store_htlc(self, resolution_time, in_flight_htlc):
-		# Occupy a slot. We must have called ensure_free_slot() earlier.
+		# Occupy a slot.
+		# We must have called ensure_free_slot() earlier.
 		assert(not self.slots.full())
 		self.slots.put_nowait((resolution_time, in_flight_htlc))
 

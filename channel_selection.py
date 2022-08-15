@@ -2,7 +2,7 @@ from channel import ChannelDirection, dir0, dir1
 
 # Functions for selecting a channel in a hop for given criteria.
 # (More precisely, a channel direction.)
-# The selection process involves three steps: 1. filter; 2. sort; 3. take top element.
+# Selection involves three steps: 1. filter; 2. sort; 3. take top element.
 
 #### FILTER ####
 
@@ -15,8 +15,8 @@ def ch_dir_enabled(ch_dir):
 	is_enabled = ch_dir.is_enabled if ch_dir is not None else False
 	return is_enabled
 
-# we MUST NOT check for free slots here: some may be occupied with outdated in-flight payments!
-# we would only resolve those inside payment handling
+# We MUST NOT check for free slots here: some may be occupied with outdated in-flight payments!
+# We would only resolve those HTLCs inside payment handling.
 
 def has_min_capacity(channels_dict, cid, min_capacity):
 	return channels_dict[cid]["capacity"] >= min_capacity
