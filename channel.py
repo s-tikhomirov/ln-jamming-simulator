@@ -12,8 +12,7 @@ dir1 = False
 class ErrorType(Enum):
 	LOW_BALANCE = "no_balance"
 	NO_SLOTS = "no_slots"
-	REJECTED_BY_RECEIVER = "rejected_by_receiver"
-	REJECTED_BY_ROUTER = "rejected_by_router"
+	FAILED_DELIBERATELY = "failed_deliberately"
 
 class ChannelDirection:
 	'''
@@ -30,7 +29,7 @@ class ChannelDirection:
 		upfront_fee_function,
 		success_fee_function,
 		deliberately_fail_prob=0,
-		spoofing_error_type = ErrorType.REJECTED_BY_ROUTER):
+		spoofing_error_type = ErrorType.FAILED_DELIBERATELY):
 		self.is_enabled = is_enabled
 		self.upfront_fee_function = upfront_fee_function
 		self.success_fee_function = success_fee_function

@@ -154,7 +154,7 @@ class LNModel:
 			#print("Can't set fee: no channel between", node_1, node_2)
 			pass
 		else:
-			ch_dict = self.get_only_ch_dir(node_1, node_2)
+			ch_dir = self.get_only_ch_dir(node_1, node_2)
 			fee_function = partial(lambda b, r, a : b + r * a, base, rate)
 			if revenue_type == RevenueType.UPFRONT:
 				ch_dir.upfront_fee_function = fee_function
@@ -185,7 +185,7 @@ class LNModel:
 		return ch_dir
 
 	def set_deliberate_failure_behavior(self, node_1, node_2, prob,
-		spoofing_error_type = ErrorType.REJECTED_BY_ROUTER):
+		spoofing_error_type = ErrorType.FAILED_DELIBERATELY):
 		ch_dir = self.get_only_ch_dir(node_1, node_2)
 		ch_dir.deliberately_fail_prob = prob
 		ch_dir.spoofing_error_type = spoofing_error_type

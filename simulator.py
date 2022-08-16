@@ -75,7 +75,7 @@ class Simulator:
 		no_balance_failures=False,
 		subtract_last_hop_upfront_fee_for_honest_payments=True,
 		keep_receiver_upfront_fee=False,
-		num_attempts_for_honest_payments=1):
+		max_num_attempts_per_route=1):
 		'''
 			Parameters:
 			- schedule
@@ -108,20 +108,23 @@ class Simulator:
 				Hence, technically this is not a revenue.
 				However, it may be useful to leave it to check for inveriants in tests (sum of all fees == 0).
 
-			- num_attempts_for_honest_payments
+			- max_num_attempts_per_route
 				The maximum number of attempts to send an honest payment.
 				Note: jams have different retry logic: they are sent until the target is jammed.
 		'''
-		now, num_events, num_failed = 0, 0, 0
-		#print("Current time:", now)
+		now, num_sent, num_failed, num_reached_receiver = -1, 0, 0, 0
+		# we make the first attempt unconditionally
+		num_jam_attempts_this_batch = 1
 		while not schedule.schedule.empty():
 			new_time, event = schedule.get_event()
+			# we count every attempt into "num_sent"
+			num_attempts = 0
 			if new_time > now:
 				#print("Current time:", new_time)
 				pass
 			now = new_time
 			if now > simulation_cutoff:
-				#print("Reached simulation end time.")
+				#print("Reached simulation end time.", now, simulation_cutoff)
 				break
 			#print("Got event:", event)
 			is_jam = event.desired_result == False
@@ -145,54 +148,161 @@ class Simulator:
 			#print("Receiver will get:", event.amount, "/ in payment body:", receiver_amount)
 			p = self.create_payment(route, receiver_amount, event.processing_delay, event.desired_result, enforce_dust_limit)
 			#print("Constructed payment:", p)
-			reached_receiver, erring_node, error_type = self.handle_payment(
-				p, route, now, no_balance_failures, keep_receiver_upfront_fee, num_attempts_for_honest_payments)
-			if error_type is not None:
-				num_failed += 1
-			# TODO: change insertion / retry logic depending on error type
-			if is_jam:
-				# jammer's reaction to failures
-				if jam_with_insertion:
-					if reached_receiver:
-						#print("Jam reached receiver")
-						#print("Putting this jam into schedule again:", now, event)
-						schedule.put_event(now, event)
-					elif target_node_pair is not None:
-						router_1, router_2 = target_node_pair
-						next_batch_time = now + event.processing_delay
-						#print("Failed at", erring_node)
-						if erring_node == router_2:
-							#print("Jam failed at router_2: a balance failure!")
-							#print("(Or attacker lacks slots: make sure it has more slots than the victim.)")
-							#print("Putting this jam into schedule again:", now, event)
+			while num_attempts < (1 if is_jam else max_num_attempts_per_route):
+				num_attempts += 1
+				reached_receiver, erring_node, error_type = self.send_payment(
+					p, route, now, no_balance_failures, keep_receiver_upfront_fee)
+				if error_type is not None:
+					num_failed += 1
+				if reached_receiver:
+					num_reached_receiver += 1
+					break
+			num_sent += num_attempts
+
+			if is_jam and jam_with_insertion:
+				if reached_receiver:
+					#print("Jam reached receiver")
+					#print("Putting this jam into schedule again:", now, event)
+					schedule.put_event(now, event)
+				else:
+					#print("Jam failed at", erring_node, error_type)
+					next_batch_time = now + event.processing_delay
+					if (error_type == ErrorType.LOW_BALANCE or 
+						error_type == ErrorType.FAILED_DELIBERATELY):
+						if num_jam_attempts_this_batch < max_num_attempts_per_route:
 							schedule.put_event(now, event)
-						elif erring_node == router_1:
-							#print("Jam failed at router_1: victim fully jammed")
-							# Note: this may be due to a balance failure, but the jammer doesn't know!
-							# If the target channel fails because of balance, it will stay unjammed
-							# until the next jamming batch.
-							# TODO: implement more complex heuristics of the target being truly jammed.
-							# One option: try a few times here, if all of them fail, it's likely jammed.
-							# But we can never be certain.
-							#print("Putting another jam for next batch:", next_batch_time, event)
-							schedule.put_event(next_batch_time, event)
+							num_jam_attempts_this_batch += 1
 						else:
-							#print("Failed at sender - ... ")
-							# TODO: make multiple routing attempts?
+							schedule.put_event(next_batch_time, event)
+							num_jam_attempts_this_batch = 1
+					elif error_type == ErrorType.NO_SLOTS:
+						sender, pre_receiver = route[0], route[-2]
+						if erring_node in (sender, pre_receiver):
+							#print("WARNING: Jammer's slots depleted. Allocate more slots to jammer's channels!")
 							pass
-			else:
-				# honest sender's reaction to failures
-				pass
-			num_events += 1
+						num_jam_attempts_this_batch = 1
+						schedule.put_event(next_batch_time, event)
 		#print("Schedule executed.")
-		#print("Handled events:", num_events)
+		#print("Handled events:", num_sent)
 		now = simulation_cutoff
 		#print("Now is simulation end time:", now)
 		# resolve all in-flight htlcs
 		#print("Finalizing in-flight HTLCs...")
 		self.finalize_in_flight_htlcs(now)
 		#print("Simulation complete.")
-		return num_events, num_failed
+		return num_sent, num_failed, num_reached_receiver
+
+	def send_payment(self, payment, route, now, no_balance_failures, keep_receiver_upfront_fee):
+		#print("SENDING PAYMENT", payment.id)
+		u_nodes, d_nodes, erring_node, error_type = route[:-1], route[1:], None, None
+		# A temporary data structure to store HTLCs before the payment reaches the receiver
+		# If the payment fails at a routing node, we don't remember in-flight HTLCs.
+		tmp_cid_to_htlcs = dict()
+		reached_receiver = False
+		#print("Attempt", num_attempts, "of", max_num_attempts_per_route)
+		p = payment
+		for u_node, d_node in list(zip(u_nodes, d_nodes)):
+			if reached_receiver:
+				break
+			# Choose a channel in the required direction
+			channels_dict = self.ln_model.channel_graph.get_edge_data(u_node, d_node)
+			direction = (u_node < d_node)
+			chosen_cid, chosen_ch_dir = lowest_fee_enabled_channel(channels_dict, p.amount, direction)
+			#print("Chose channel to forward:", chosen_cid)
+			#print(chosen_ch_dir)
+			
+			# TODO: channel selection functions may be different at payment creation and handling.
+			# Check here that the payment pays enough fees?
+
+			# Deliberately fail the payment with some probability
+			# (not used in experiments but useful for testing response to errors)
+			if random() < chosen_ch_dir.deliberately_fail_prob:
+				#print("Node", u_node, "deliberately fails payment")
+				erring_node = u_node
+				error_type = chosen_ch_dir.spoofing_error_type
+				break
+
+			# Model balance failures randomly, depending on the amount and channel capacity
+			if not no_balance_failures:
+				# The channel must accommodate the amount plus the upfront fee
+				amount_plus_upfront_fee = p.amount + p.upfront_fee
+				prob_low_balance = amount_plus_upfront_fee / channels_dict[chosen_cid]["capacity"]
+				#print("Probability of balance failure:", prob_low_balance)
+				if random() < prob_low_balance:
+					#print("Low balance:", u_node, "fails payment")
+					erring_node = u_node
+					error_type = ErrorType.LOW_BALANCE
+					break
+						
+			# Check if there is a free slot
+			has_free_slot, resolution_time, released_htlc = chosen_ch_dir.ensure_free_slot(now)
+			if released_htlc is not None:
+				# Resolve the outdated HTLC we released to free a slot for the current payment
+				#print("Popped htlc from", u_node, d_node, ":", resolution_time, released_htlc)
+				self.apply_htlc(resolution_time, released_htlc, u_node, d_node, now)
+			if not has_free_slot:
+				# All slots are busy, and there are no outdated HTLCs that could be released
+				#print("No free slots:", u_node, "fails payment")
+				erring_node = u_node
+				error_type = ErrorType.NO_SLOTS
+				break
+
+			# Account for upfront fees
+			self.ln_model.subtract_revenue(u_node, RevenueType.UPFRONT, p.upfront_fee)
+			is_last_hop = d_node == route[-1]
+			if not is_last_hop or keep_receiver_upfront_fee:
+				self.ln_model.add_revenue(d_node, RevenueType.UPFRONT, p.upfront_fee)
+
+			# Construct an HTLC to be stored in a temporary dictionary until we know if receiver is reached
+			in_flight_htlc = InFlightHtlc(p.id, p.success_fee, p.desired_result)
+			#print("Constructed htlc:", in_flight_htlc)
+			tmp_cid_to_htlcs[(u_node, d_node)] = chosen_cid, direction, now + p.processing_delay, in_flight_htlc
+
+			# Unwrap the next onion level for the next hop 
+			p = p.downstream_payment
+			# If the next payment is None, it means we've reached the receiver
+			reached_receiver = p is None
+
+		assert(reached_receiver or error_type is not None)
+		#print("Reached receiver:", reached_receiver)
+		#print("erring_node:", erring_node)
+		#print("Temporarily saved htlcs:", tmp_cid_to_htlcs)
+
+		# For each channel in the route, store HTLCs for the current payment
+		if reached_receiver:
+			if payment.desired_result == False:
+				error_type = ErrorType.FAILED_DELIBERATELY
+			for u_node, d_node in list(zip(u_nodes, d_nodes)):
+				if (u_node, d_node) in tmp_cid_to_htlcs:
+					chosen_cid, direction, resolution_time, in_flight_htlc = tmp_cid_to_htlcs[(u_node, d_node)]
+					#print("Storing htlc for", chosen_cid, "to resolve at time", resolution_time, ":", in_flight_htlc)
+					ch_dir = self.ln_model.channel_graph.get_edge_data(u_node, d_node)[chosen_cid]["directions"][direction]
+					ch_dir.store_htlc(resolution_time, in_flight_htlc)
+
+		return reached_receiver, erring_node, error_type
+		
+	def finalize_in_flight_htlcs(self, now):
+		'''
+			Apply all in-flight htlcs with timestamp < now.
+			This is done after the simulation is complete.
+		'''
+		for (node_a, node_b) in self.ln_model.channel_graph.edges():
+			channels_dict = self.ln_model.channel_graph.get_edge_data(node_a, node_b)
+			for cid in channels_dict:
+				for direction in [dir0, dir1]:
+					ch_dir = channels_dict[cid]["directions"][direction]
+					if ch_dir is None:
+						continue
+					time_exceeded = False
+					while not ch_dir.slots.empty():
+						next_htlc_time = ch_dir.slots.queue[0][0]
+						#print("Next HTLC resolution time is:", next_htlc_time)
+						if next_htlc_time > now:
+							#print("No HTLCs to resolve before current time.")
+							break
+						resolution_time, released_htlc = ch_dir.slots.get_nowait()
+						#print(resolution_time, released_htlc)
+						self.apply_htlc(resolution_time, released_htlc, node_a, node_b, now)
 
 	def get_adjusted_amount(self, amount, route):
 		'''
@@ -262,118 +372,3 @@ class Simulator:
 			#print("Applying", htlc)
 			self.ln_model.subtract_revenue(	u_node, RevenueType.SUCCESS, htlc.success_fee)
 			self.ln_model.add_revenue(		d_node, RevenueType.SUCCESS, htlc.success_fee)
-
-	def handle_payment(self, payment, route, now, no_balance_failures, keep_receiver_upfront_fee, max_num_attempts):
-		#print("HANDLING PAYMENT", payment.id)
-		u_nodes, d_nodes, erring_node, error_type = route[:-1], route[1:], None, None
-		# A temporary data structure to store HTLCs before the payment reaches the receiver
-		# If the payment fails at a routing node, we don't remember in-flight HTLCs.
-		tmp_cid_to_htlcs = dict()
-		num_attempts, reached_receiver = 0, False
-		while num_attempts < max_num_attempts and not reached_receiver:
-			num_attempts += 1
-			#print("Attempt", num_attempts, "of", max_num_attempts)
-			p = payment
-			for u_node, d_node in list(zip(u_nodes, d_nodes)):
-				if reached_receiver:
-					break
-				# Choose a channel in the required direction
-				channels_dict = self.ln_model.channel_graph.get_edge_data(u_node, d_node)
-				direction = (u_node < d_node)
-				chosen_cid, chosen_ch_dir = lowest_fee_enabled_channel(channels_dict, p.amount, direction)
-				#print("Chose channel to forward:", chosen_cid)
-				#print(chosen_ch_dir)
-				
-				# TODO: channel selection functions may be different at payment creation and handling.
-				# Check here that the payment pays enough fees?
-
-				# Deliberately fail the payment with some probability
-				# (not used in experiments but useful for testing response to errors)
-				if random() < chosen_ch_dir.deliberately_fail_prob:
-					#print("Node", u_node, "deliberately fails payment")
-					erring_node = u_node
-					error_type = chosen_ch_dir.spoofing_error_type
-					break
-
-				# Model balance failures randomly, depending on the amount and channel capacity
-				if not no_balance_failures:
-					# The channel must accommodate the amount plus the upfront fee
-					amount_plus_upfront_fee = p.amount + p.upfront_fee
-					prob_low_balance = amount_plus_upfront_fee / channels_dict[chosen_cid]["capacity"]
-					#print("Probability of balance failure:", prob_low_balance)
-					if random() < prob_low_balance:
-						#print("Low balance:", u_node, "fails payment")
-						erring_node = u_node
-						error_type = ErrorType.LOW_BALANCE
-						break
-							
-				# Check if there is a free slot
-				has_free_slot, resolution_time, released_htlc = chosen_ch_dir.ensure_free_slot(now)
-				if released_htlc is not None:
-					# Resolve the outdated HTLC we released to free a slot for the current payment
-					#print("Popped htlc from", u_node, d_node, ":", resolution_time, released_htlc)
-					self.apply_htlc(resolution_time, released_htlc, u_node, d_node, now)
-				if not has_free_slot:
-					# All slots are busy, and there are no outdated HTLCs that could be released
-					#print("No free slots:", u_node, "fails payment")
-					erring_node = u_node
-					error_type = ErrorType.NO_SLOTS
-					break
-
-				# Account for upfront fees
-				self.ln_model.subtract_revenue(u_node, RevenueType.UPFRONT, p.upfront_fee)
-				is_last_hop = d_node == route[-1]
-				if not is_last_hop or keep_receiver_upfront_fee:
-					self.ln_model.add_revenue(d_node, RevenueType.UPFRONT, p.upfront_fee)
-
-				# Construct an HTLC to be stored in a temporary dictionary until we know if receiver is reached
-				in_flight_htlc = InFlightHtlc(p.id, p.success_fee, p.desired_result)
-				#print("Constructed htlc:", in_flight_htlc)
-				tmp_cid_to_htlcs[(u_node, d_node)] = chosen_cid, direction, now + p.processing_delay, in_flight_htlc
-
-				# Unwrap the next onion level for the next hop 
-				p = p.downstream_payment
-				# If the next payment is None, it means we've reached the receiver
-				reached_receiver = p is None
-
-		assert(reached_receiver or error_type is not None)
-		#print("Reached receiver:", reached_receiver)
-		#print("erring_node:", erring_node)
-		#print("Temporarily saved htlcs:", tmp_cid_to_htlcs)
-
-		# For each channel in the route, store HTLCs for the current payment
-		if reached_receiver:
-			if payment.desired_result == False:
-				error_type = ErrorType.REJECTED_BY_RECEIVER
-			for u_node, d_node in list(zip(u_nodes, d_nodes)):
-				if (u_node, d_node) in tmp_cid_to_htlcs:
-					chosen_cid, direction, resolution_time, in_flight_htlc = tmp_cid_to_htlcs[(u_node, d_node)]
-					#print("Storing htlc for", chosen_cid, "to resolve at time", resolution_time, ":", in_flight_htlc)
-					ch_dir = self.ln_model.channel_graph.get_edge_data(u_node, d_node)[chosen_cid]["directions"][direction]
-					ch_dir.store_htlc(resolution_time, in_flight_htlc)
-
-		return reached_receiver, erring_node, error_type
-		
-	def finalize_in_flight_htlcs(self, now):
-		'''
-			Apply all in-flight htlcs with timestamp < now.
-			This is done after the simulation is complete.
-		'''
-		for (node_a, node_b) in self.ln_model.channel_graph.edges():
-			channels_dict = self.ln_model.channel_graph.get_edge_data(node_a, node_b)
-			for cid in channels_dict:
-				for direction in [dir0, dir1]:
-					ch_dir = channels_dict[cid]["directions"][direction]
-					if ch_dir is None:
-						continue
-					time_exceeded = False
-					while not ch_dir.slots.empty():
-						next_htlc_time = ch_dir.slots.queue[0][0]
-						#print("Next HTLC resolution time is:", next_htlc_time)
-						if next_htlc_time > now:
-							#print("No HTLCs to resolve before current time.")
-							break
-						resolution_time, released_htlc = ch_dir.slots.get_nowait()
-						#print(resolution_time, released_htlc)
-						self.apply_htlc(resolution_time, released_htlc, node_a, node_b, now)
-

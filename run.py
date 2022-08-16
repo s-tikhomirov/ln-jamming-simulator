@@ -45,6 +45,8 @@ def main():
 		help="Success-case fee rate per million (same for all channels).")
 	parser.add_argument("--default_num_slots", default=ProtocolParams["NUM_SLOTS"], type=int,
 		help="Number of slots for honest channels (attackes has twice as many).")
+	parser.add_argument("--max_num_attempts", default=1, type=int,
+		help="Number of attempts per payment / jam in case of balance or deliberate failures.")
 	parser.add_argument('--no_balance_failures', dest='no_balance_failures', default=False, action='store_true')
 	parser.add_argument('--keep_receiver_upfront_fee', dest='keep_receiver_upfront_fee', default=True, action='store_true')
 	parser.add_argument("--upfront_base_coeff_range",
@@ -74,7 +76,8 @@ def main():
 		args.success_fee_rate,
 		args.no_balance_failures,
 		args.keep_receiver_upfront_fee,
-		args.default_num_slots)
+		args.default_num_slots,
+		args.max_num_attempts)
 
 	experiment.set_sender("Alice")
 	experiment.set_receiver("Dave")

@@ -1,4 +1,4 @@
-from math import isclose
+from math import isclose, floor
 import json
 import pytest
 
@@ -20,15 +20,16 @@ def test_simulator_one_successful_payment(example_ln_model):
 	sch = Schedule()
 	event = Event("Alice", "Dave", 100, 1, True)
 	sch.put_event(0, event)
-	num_events, num_failed = sim.execute_schedule(sch, simulation_cutoff=10,
+	num_sent, num_failed, num_reached_receiver = sim.execute_schedule(sch, simulation_cutoff=10,
 		enforce_dust_limit=False,
 		no_balance_failures=True,
 		subtract_last_hop_upfront_fee_for_honest_payments=False,
 		keep_receiver_upfront_fee=True)
 	#example_ln_model.report_revenues()
-	assert(num_events == 1)
+	assert(num_sent == 1)
 	assert(num_failed == 0)
-	assert_final_revenue_correctness(sim, num_events)
+	assert(num_reached_receiver == 1)
+	assert_final_revenue_correctness(sim, num_sent)
 	# Now we make specific tests; Dave's revenues are zero by construction (tested above)
 	a_rev_upfront = sim.ln_model.get_revenue("Alice", RevenueType.UPFRONT)
 	a_rev_success = sim.ln_model.get_revenue("Alice", RevenueType.SUCCESS)
@@ -62,16 +63,17 @@ def test_simulator_one_jam(example_ln_model):
 	sch = Schedule()
 	event = Event("Alice", "Dave", 100, 1, False)
 	sch.put_event(0, event)
-	num_events, num_failed = sim.execute_schedule(sch,
+	num_sent, num_failed, num_reached_receiver = sim.execute_schedule(sch,
 		simulation_cutoff=2,
 		enforce_dust_limit=False,
 		no_balance_failures=True,
 		subtract_last_hop_upfront_fee_for_honest_payments=False,
 		keep_receiver_upfront_fee=True)
-	assert(num_events == 1)
+	assert(num_sent == 1)
 	assert(num_failed == 1)
+	assert(num_reached_receiver == 1)
 	#example_ln_model.report_revenues()
-	assert_final_revenue_correctness(sim, num_events)
+	assert_final_revenue_correctness(sim, num_sent)
 	# Now we make specific tests; Dave's revenues are zero by construction (tested above)
 	a_rev_upfront = sim.ln_model.get_revenue("Alice", RevenueType.UPFRONT)
 	a_rev_success = sim.ln_model.get_revenue("Alice", RevenueType.SUCCESS)
@@ -98,19 +100,20 @@ def test_simulator_end_htlc_resolution(example_ln_model):
 	event2 = Event("Alice", "Dave", 100, 15, True)
 	sch.put_event(0, event1)
 	sch.put_event(0, event2)
-	num_events, num_failed = sim.execute_schedule(sch,
+	num_sent, num_failed, num_reached_receiver = sim.execute_schedule(sch,
 		simulation_cutoff=10,
 		enforce_dust_limit=False,
 		no_balance_failures=True,
 		subtract_last_hop_upfront_fee_for_honest_payments=False,
 		keep_receiver_upfront_fee=True)
-	assert(num_events == 2)
+	assert(num_sent == 2)
 	# the first payment succeeded, the second was in-flight at cutoff time
 	# it has neither succeeded nor failed
 	assert(num_failed == 0)
+	assert(num_reached_receiver == 2)
 	# Compared to one successful payment:
 	# success-case revenues don't change; upfront revenues are twice as high
-	assert_final_revenue_correctness(sim, num_events)
+	assert_final_revenue_correctness(sim, num_sent)
 	# Now we make specific tests; Dave's revenues are zero by construction (tested above)
 	a_rev_upfront = sim.ln_model.get_revenue("Alice", RevenueType.UPFRONT)
 	a_rev_success = sim.ln_model.get_revenue("Alice", RevenueType.SUCCESS)
@@ -146,12 +149,12 @@ def test_simulator_with_random_schedule(example_ln_model):
 		payment_processing_delay_function = honest_proccesing_delay_function,
 		payment_generation_delay_function = honest_generation_delay_function,
 		scheduled_duration = scheduled_duration)
-	num_events, num_failed = sim.execute_schedule(sch,
+	num_sent, num_failed, num_reached_receiver = sim.execute_schedule(sch,
 		simulation_cutoff=scheduled_duration,
 		no_balance_failures=True,
 		keep_receiver_upfront_fee=True)
-	assert(num_events > 0)
-	assert_final_revenue_correctness(sim, num_events)
+	assert(num_sent > 0)
+	assert_final_revenue_correctness(sim, num_sent)
 	#example_ln_model.report_revenues()
 
 def test_simulator_jamming(example_ln_model):
@@ -162,7 +165,7 @@ def test_simulator_jamming(example_ln_model):
 	jam_processing_delay = 4
 	simulation_cutoff = 10
 	sch.put_event(0, Event("Alice", "Dave", 100, jam_processing_delay, False))
-	num_events, num_failed = sim.execute_schedule(sch,
+	num_sent, num_failed, num_reached_receiver = sim.execute_schedule(sch,
 		target_node_pair=("Bob", "Charlie"),
 		jam_with_insertion=True,
 		simulation_cutoff=simulation_cutoff,
@@ -185,9 +188,10 @@ def test_simulator_jamming(example_ln_model):
 	# We expect 3 batches of 3 jams each (at times 0, 4, 8).
 	# Two jams per batch reach the receiver, the third fails at B indicating that the victim is jammed.
 	# Therefore, A pays to B 9x upfront fee, while B pays to C, and C pays to D, 6x upfront fee.
-	assert(num_events == 9)
-	assert(num_failed == num_events)
-	assert_final_revenue_correctness(sim, num_events)
+	assert(num_sent == 9)
+	assert(num_failed == num_sent)
+	assert(num_reached_receiver == 6)
+	assert_final_revenue_correctness(sim, num_sent)
 	assert(isclose(a_rev_upfront, -19.664 * 9))
 	assert(isclose(b_rev_upfront, 19.664 * 9 - 8.24 * 6))
 	assert(isclose(c_rev_upfront, 8.24 * 6 - 2 * 6))
@@ -195,7 +199,7 @@ def test_simulator_jamming(example_ln_model):
 	assert(a_rev_success == b_rev_success == c_rev_success == d_rev_success == 0)
 	#example_ln_model.report_revenues()
 
-def assert_final_revenue_correctness(sim, num_events):
+def assert_final_revenue_correctness(sim, num_sent):
 	a_rev_upfront = sim.ln_model.get_revenue("Alice", RevenueType.UPFRONT)
 	a_rev_success = sim.ln_model.get_revenue("Alice", RevenueType.SUCCESS)
 	b_rev_upfront = sim.ln_model.get_revenue("Bob", RevenueType.UPFRONT)
@@ -211,7 +215,7 @@ def assert_final_revenue_correctness(sim, num_events):
 	assert(a_rev_upfront <= 0)
 	assert(a_rev_success <= 0)
 	### The following is true after _any_ simulation with at least one 
-	assert(a_rev_upfront + a_rev_success < 0 or num_events == 0)
+	assert(a_rev_upfront + a_rev_success < 0 or num_sent == 0)
 
 	# Bob and Charlie are routing nodes; their revenues are non-negative
 	assert(b_rev_upfront >= 0)
@@ -241,20 +245,46 @@ def test_body_for_amount_function():
 	assert(adjusted_amount == 986)
 
 
-def test_error_response(example_ln_model):
+def test_error_response_honest(example_ln_model):
 	# an honest payment gets retried multiple times but still fails
 	example_ln_model.set_deliberate_failure_behavior("Bob", "Charlie", 1)
 	sim = Simulator(example_ln_model)
 	sch = Schedule()
 	event = Event("Alice", "Dave", 100, 1, True)
 	sch.put_event(0, event)
-	num_events, num_failed = sim.execute_schedule(sch,
+	max_num_attempts_per_route = 5
+	num_sent, num_failed, num_reached_receiver = sim.execute_schedule(sch,
 		simulation_cutoff=2,
 		enforce_dust_limit=False,
 		no_balance_failures=True,
 		subtract_last_hop_upfront_fee_for_honest_payments=False,
 		keep_receiver_upfront_fee=True,
-		num_attempts_for_honest_payments=5)
-	assert(num_events == 1)
-	assert(num_failed == num_events)
-	
+		max_num_attempts_per_route=max_num_attempts_per_route)
+	assert(num_sent == max_num_attempts_per_route)
+	assert(num_failed == num_sent)
+	assert(num_reached_receiver == 0)
+
+
+def test_error_response_jamming(example_ln_model):
+	example_ln_model.set_deliberate_failure_behavior("Bob", "Charlie", prob = 1)
+	example_ln_model.set_num_slots("Alice", "Bob", 100)
+	example_ln_model.set_num_slots("Charlie", "Dave", 100)
+	sim = Simulator(example_ln_model)
+	sch = Schedule()
+	simulation_cutoff 	= 4
+	jam_processing_delay = 4
+	event = Event("Alice", "Dave", 100, jam_processing_delay, False)
+	sch.put_event(0, event)
+	max_num_attempts_per_route 	= 1
+	num_sent, num_failed, num_reached_receiver = sim.execute_schedule(sch,
+		target_node_pair=("Bob", "Charlie"),
+		jam_with_insertion=True,
+		simulation_cutoff=simulation_cutoff,
+		enforce_dust_limit=False,
+		no_balance_failures=True,
+		subtract_last_hop_upfront_fee_for_honest_payments=False,
+		keep_receiver_upfront_fee=True,
+		max_num_attempts_per_route=max_num_attempts_per_route)
+	assert(num_sent == (1 + floor(simulation_cutoff / jam_processing_delay)) * max_num_attempts_per_route)
+	assert(num_failed == num_sent)
+	assert(num_reached_receiver == 0)

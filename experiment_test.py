@@ -2,7 +2,7 @@ from experiment import Experiment
 
 import pytest
 
-from math import ceil
+from math import floor
 
 
 @pytest.fixture
@@ -42,7 +42,8 @@ def example_experiment(example_snapshot_json):
 		success_fee_rate = 5 / (1000 * 1000),
 		no_balance_failures = True,
 		keep_receiver_upfront_fee = True,
-		default_num_slots = 5)
+		default_num_slots = 5,
+		max_num_attempts_per_route = 1)
 	experiment.set_sender("Alice")
 	experiment.set_receiver("Dave")
 	experiment.set_target_node_pair("Bob", "Charlie")
@@ -60,9 +61,16 @@ def test_experiment_no_balance_failures(example_experiment):
 	experiment.run_simulations(upfront_base_coeff_range, upfront_rate_coeff_range)
 
 	# the number of jams is constant and pre-determined if no_balance_failures is True
-	expected_num_jams = int(ceil(simulation_duration / experiment.jam_delay)) * (default_num_slots + 1)
+	expected_num_jams = int(1 + floor(simulation_duration / experiment.jam_delay)) * (default_num_slots + 1)
 	for i in range(len(experiment.results["results"])):
-		assert(experiment.results["results"][i]["num_jams"] == expected_num_jams)
+		stats = experiment.results["results"][i]["stats"]
+		assert(stats["honest"]["num_failed"] <= stats["honest"]["num_sent"])
+		if example_experiment.num_simulations == 1:
+			assert(stats["honest"]["num_sent"] == stats["honest"]["num_failed"] + stats["honest"]["num_reached_receiver"])
+			assert(stats["jamming"]["num_sent"] == expected_num_jams)
+			assert(stats["jamming"]["num_failed"] == stats["jamming"]["num_sent"])
+		for experiment_type in ("honest", "jamming"):
+			assert(stats[experiment_type]["num_reached_receiver"] <= stats[experiment_type]["num_sent"])
 
 	# everyone's revenue under jamming is zero with zero upfront fees
 	zero_upfront_fee_result = [r for r in experiment.results["results"] if (
