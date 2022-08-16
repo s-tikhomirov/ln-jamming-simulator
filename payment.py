@@ -16,6 +16,7 @@ class Payment:
 	
 	def __init__(self,
 		downstream_payment,
+		downstream_node,
 		upfront_fee_function,
 		success_fee_function,
 		desired_result=None,
@@ -53,6 +54,7 @@ class Payment:
 		# make sure that given arguments are not contradictory
 		assert(is_last_hop or is_not_last_hop)
 		self.downstream_payment = downstream_payment
+		self.downstream_node = downstream_node
 		if is_last_hop:
 			# Payment ID is useful for pushing equal HTLCs into the slots queues
 			self.id = "".join(choice(hexdigits) for i in range(6))
@@ -84,6 +86,7 @@ class Payment:
 		s = "\nPayment with amount: 	" + str(self.amount)
 		s += "\n  of which body:	" + str(self.body)
 		s += "\n  success-case fee:	" + str(self.success_fee)
+		s += "\nTo node:		" + str(self.downstream_node)
 		s += "\nUpfront fee: 		" + str(self.upfront_fee)
 		s += "\nAmount + upfront_fee:	" + str(self.amount + self.upfront_fee)
 		s += "\nDownstream payment:	" + str(self.downstream_payment)

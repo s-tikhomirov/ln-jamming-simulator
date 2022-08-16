@@ -28,27 +28,31 @@ def test_manual_payment_creation(example_payment_upfront_fee_function, example_p
 		Test simple multi-hop payment creation.
 		Here, we don't subtract final-hop upfront fee from what receiver gets.
 	"""
-	p0 = Payment(
+	p_cd = Payment(
 		downstream_payment = None,
+		downstream_node = None,
 		upfront_fee_function = example_payment_upfront_fee_function,
 		success_fee_function = example_payment_success_fee_function,
 		desired_result = True,
 		processing_delay = 1,
 		receiver_amount = 100)
-	p1 = Payment(p0, example_payment_upfront_fee_function, example_payment_success_fee_function)
-	p2 = Payment(p1, example_payment_upfront_fee_function, example_payment_success_fee_function)
-	for p in [p0, p1, p2]:	
-		assert(p0.processing_delay 	== 1)
-		assert(p0.desired_result == True)
-	assert(p0.body 			== 100)
-	assert(p0.success_fee 	== 0)
-	assert(p0.upfront_fee 	== 4)
-	assert(p1.body 			== 100)
-	assert(p1.success_fee 	== 10)
-	assert(p1.upfront_fee 	== 9)
-	assert(p2.body 			== 110)
-	assert(p2.success_fee 	== 21)
-	assert(p2.upfront_fee 	== 14)
+	p_bc = Payment(p_cd, "Charlie", example_payment_upfront_fee_function, example_payment_success_fee_function)
+	p_ab = Payment(p_bc, "Bob", example_payment_upfront_fee_function, example_payment_success_fee_function)
+	for p in [p_ab, p_bc, p_cd]:
+		assert(p.processing_delay 	== 1)
+		assert(p.desired_result == True)
+	assert(p_ab.body 			== 110)
+	assert(p_ab.success_fee 	== 21)
+	assert(p_ab.upfront_fee 	== 14)
+	assert(p_ab.downstream_node == "Bob")
+	assert(p_bc.body 			== 100)
+	assert(p_bc.success_fee 	== 10)
+	assert(p_bc.upfront_fee 	== 9)
+	assert(p_bc.downstream_node == "Charlie")
+	assert(p_cd.body 			== 100)
+	assert(p_cd.success_fee 	== 0)
+	assert(p_cd.upfront_fee 	== 4)
+	assert(p_cd.downstream_node is None)
 
 
 
