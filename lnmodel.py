@@ -8,13 +8,13 @@ from params import K, M
 
 from enum import Enum
 
-TEST_NUM_SLOTS = 2
-
 class RevenueType(Enum):
 	UPFRONT = "upfront_revenue"
 	SUCCESS = "success_revenue"
 
-def get_channel_graph_from_json(snapshot_json, default_num_slots = TEST_NUM_SLOTS):
+from channel import ErrorType
+
+def get_channel_graph_from_json(snapshot_json, default_num_slots):
 	# Parse a Core Lightning listchannels.json snapshot
 	# into a NetworkX MultiGraph.
 	# Each edge corresponds to a channel. Edge id = channel id.
@@ -73,7 +73,7 @@ class LNModel:
 		A class to store the LN graph and do graph operations.
 	'''
 
-	def __init__(self, snapshot_json, default_num_slots=TEST_NUM_SLOTS):
+	def __init__(self, snapshot_json, default_num_slots):
 		self.channel_graph = get_channel_graph_from_json(snapshot_json, default_num_slots)
 		self.routing_graph = get_routing_graph_from_json(snapshot_json)
 		# To filter graph views, add a safety margin to account for the (yet unknown) fees.
@@ -154,10 +154,7 @@ class LNModel:
 			#print("Can't set fee: no channel between", node_1, node_2)
 			pass
 		else:
-			ch_dict = self.channel_graph.get_edge_data(node_1, node_2)
-			direction = node_1 < node_2
-			assert(len(ch_dict.keys()) == 1)
-			ch_dir = next(iter(ch_dict.values()))["directions"][direction]
+			ch_dict = self.get_only_ch_dir(node_1, node_2)
 			fee_function = partial(lambda b, r, a : b + r * a, base, rate)
 			if revenue_type == RevenueType.UPFRONT:
 				ch_dir.upfront_fee_function = fee_function
@@ -175,13 +172,23 @@ class LNModel:
 		# Resize the slots queue to a num_slots.
 		# Note: by default, this erases existing in-flight HTLCs.
 		# (Which is OK as we use this to reset the graph between experiments.)
+		ch_dir = self.get_only_ch_dir(node_1, node_2)
+		if ch_dir is not None:
+			ch_dir.set_num_slots(num_slots)
+
+	def get_only_ch_dir(self, node_1, node_2):
 		ch_dict = self.channel_graph.get_edge_data(node_1, node_2)
 		direction = (node_1 < node_2)
 		# assume there is only one channel in this hop
 		assert(len(ch_dict.keys()) == 1)
 		ch_dir = next(iter(ch_dict.values()))["directions"][direction]
-		if ch_dir is not None:
-			ch_dir.set_num_slots(num_slots)
+		return ch_dir
+
+	def set_deliberate_failure_behavior(self, node_1, node_2, prob,
+		spoofing_error_type = ErrorType.REJECTED_BY_ROUTER):
+		ch_dir = self.get_only_ch_dir(node_1, node_2)
+		ch_dir.deliberately_fail_prob = prob
+		ch_dir.spoofing_error_type = spoofing_error_type
 
 	def report_revenues(self):
 		print("\n\n*** Revenues ***")

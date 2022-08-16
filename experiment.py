@@ -61,10 +61,10 @@ class Experiment:
 				payment_processing_delay_function = honest_proccesing_delay_function,
 				payment_generation_delay_function = honest_generation_delay_function,
 				scheduled_duration = self.simulation_duration)
-			num_events = self.simulator.execute_schedule(sch_honest, 
+			num_events, num_failed = self.simulator.execute_schedule(sch_honest, 
 				no_balance_failures=self.no_balance_failures,
 				keep_receiver_upfront_fee=self.keep_receiver_upfront_fee,
-				simulation_end = self.simulation_duration)
+				simulation_cutoff = self.simulation_duration)
 			print("Handled events:", num_events)
 			for node in self.ln_model.channel_graph.nodes:
 				upfront_revenue = self.ln_model.get_revenue(node, RevenueType.UPFRONT)
@@ -93,12 +93,12 @@ class Experiment:
 				processing_delay = self.jam_delay,
 				desired_result = False)
 			sch_jamming.put_event(0, first_jam)
-			num_events = self.simulator.execute_schedule(sch_jamming,
+			num_events, num_failed = self.simulator.execute_schedule(sch_jamming,
 				target_node_pair = self.target_node_pair,
 				jam_with_insertion = True,
 				no_balance_failures=self.no_balance_failures,
 				keep_receiver_upfront_fee=self.keep_receiver_upfront_fee,
-				simulation_end = self.simulation_duration)
+				simulation_cutoff = self.simulation_duration)
 			print("Handled events:", num_events)
 			for node in self.ln_model.channel_graph.nodes:
 				upfront_revenue = self.ln_model.get_revenue(node, RevenueType.UPFRONT)

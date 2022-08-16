@@ -13,20 +13,21 @@ TEST_SNAPSHOT_FILENAME = "./snapshots/listchannels_test.json"
 def example_ln_model():
 	with open(TEST_SNAPSHOT_FILENAME, 'r') as snapshot_file:
 		snapshot_json = json.load(snapshot_file)
-	return LNModel(snapshot_json)
+	return LNModel(snapshot_json, default_num_slots=2)
 
 def test_simulator_one_successful_payment(example_ln_model):
 	sim = Simulator(example_ln_model)
 	sch = Schedule()
 	event = Event("Alice", "Dave", 100, 1, True)
 	sch.put_event(0, event)
-	num_events = sim.execute_schedule(sch, simulation_end=10,
+	num_events, num_failed = sim.execute_schedule(sch, simulation_cutoff=10,
 		enforce_dust_limit=False,
 		no_balance_failures=True,
 		subtract_last_hop_upfront_fee_for_honest_payments=False,
 		keep_receiver_upfront_fee=True)
-	example_ln_model.report_revenues()
+	#example_ln_model.report_revenues()
 	assert(num_events == 1)
+	assert(num_failed == 0)
 	assert_final_revenue_correctness(sim, num_events)
 	# Now we make specific tests; Dave's revenues are zero by construction (tested above)
 	a_rev_upfront = sim.ln_model.get_revenue("Alice", RevenueType.UPFRONT)
@@ -61,14 +62,15 @@ def test_simulator_one_jam(example_ln_model):
 	sch = Schedule()
 	event = Event("Alice", "Dave", 100, 1, False)
 	sch.put_event(0, event)
-	num_events = sim.execute_schedule(sch,
-		simulation_end=2,
+	num_events, num_failed = sim.execute_schedule(sch,
+		simulation_cutoff=2,
 		enforce_dust_limit=False,
 		no_balance_failures=True,
 		subtract_last_hop_upfront_fee_for_honest_payments=False,
 		keep_receiver_upfront_fee=True)
 	assert(num_events == 1)
-	example_ln_model.report_revenues()
+	assert(num_failed == 1)
+	#example_ln_model.report_revenues()
 	assert_final_revenue_correctness(sim, num_events)
 	# Now we make specific tests; Dave's revenues are zero by construction (tested above)
 	a_rev_upfront = sim.ln_model.get_revenue("Alice", RevenueType.UPFRONT)
@@ -96,13 +98,16 @@ def test_simulator_end_htlc_resolution(example_ln_model):
 	event2 = Event("Alice", "Dave", 100, 15, True)
 	sch.put_event(0, event1)
 	sch.put_event(0, event2)
-	num_events = sim.execute_schedule(sch,
-		simulation_end=10,
+	num_events, num_failed = sim.execute_schedule(sch,
+		simulation_cutoff=10,
 		enforce_dust_limit=False,
 		no_balance_failures=True,
 		subtract_last_hop_upfront_fee_for_honest_payments=False,
 		keep_receiver_upfront_fee=True)
 	assert(num_events == 2)
+	# the first payment succeeded, the second was in-flight at cutoff time
+	# it has neither succeeded nor failed
+	assert(num_failed == 0)
 	# Compared to one successful payment:
 	# success-case revenues don't change; upfront revenues are twice as high
 	assert_final_revenue_correctness(sim, num_events)
@@ -127,7 +132,7 @@ def test_simulator_end_htlc_resolution(example_ln_model):
 	assert(isclose(c_rev_success, 8))
 	assert(isclose(d_rev_upfront, 2 * 2))
 	assert(isclose(d_rev_success, 0))
-	example_ln_model.report_revenues()
+	#example_ln_model.report_revenues()
 
 def test_simulator_with_random_schedule(example_ln_model):
 	sim = Simulator(example_ln_model)
@@ -141,25 +146,26 @@ def test_simulator_with_random_schedule(example_ln_model):
 		payment_processing_delay_function = honest_proccesing_delay_function,
 		payment_generation_delay_function = honest_generation_delay_function,
 		scheduled_duration = scheduled_duration)
-	num_events = sim.execute_schedule(sch,
-		simulation_end=scheduled_duration,
+	num_events, num_failed = sim.execute_schedule(sch,
+		simulation_cutoff=scheduled_duration,
 		no_balance_failures=True,
 		keep_receiver_upfront_fee=True)
 	assert(num_events > 0)
-	example_ln_model.report_revenues()
+	assert_final_revenue_correctness(sim, num_events)
+	#example_ln_model.report_revenues()
 
 def test_simulator_jamming(example_ln_model):
 	sim = Simulator(example_ln_model)
 	example_ln_model.set_num_slots("Alice", "Bob", 100)
 	example_ln_model.set_num_slots("Charlie", "Dave", 100)
 	sch = Schedule()
-	jam_processing_delay 	= 4
-	simulation_end 			= 10
+	jam_processing_delay = 4
+	simulation_cutoff = 10
 	sch.put_event(0, Event("Alice", "Dave", 100, jam_processing_delay, False))
-	num_events = sim.execute_schedule(sch,
+	num_events, num_failed = sim.execute_schedule(sch,
 		target_node_pair=("Bob", "Charlie"),
 		jam_with_insertion=True,
-		simulation_end=simulation_end,
+		simulation_cutoff=simulation_cutoff,
 		enforce_dust_limit=False,
 		no_balance_failures=True,
 		subtract_last_hop_upfront_fee_for_honest_payments=False,
@@ -180,12 +186,14 @@ def test_simulator_jamming(example_ln_model):
 	# Two jams per batch reach the receiver, the third fails at B indicating that the victim is jammed.
 	# Therefore, A pays to B 9x upfront fee, while B pays to C, and C pays to D, 6x upfront fee.
 	assert(num_events == 9)
+	assert(num_failed == num_events)
+	assert_final_revenue_correctness(sim, num_events)
 	assert(isclose(a_rev_upfront, -19.664 * 9))
 	assert(isclose(b_rev_upfront, 19.664 * 9 - 8.24 * 6))
 	assert(isclose(c_rev_upfront, 8.24 * 6 - 2 * 6))
 	assert(isclose(d_rev_upfront, 2 * 6))
 	assert(a_rev_success == b_rev_success == c_rev_success == d_rev_success == 0)
-	example_ln_model.report_revenues()
+	#example_ln_model.report_revenues()
 
 def assert_final_revenue_correctness(sim, num_events):
 	a_rev_upfront = sim.ln_model.get_revenue("Alice", RevenueType.UPFRONT)
@@ -231,3 +239,22 @@ def test_body_for_amount_function():
 	# 986 * 0.01 + 5 = 9.86 + 5 = 14.86
 	# 986 + 14.86 = 1000.986
 	assert(adjusted_amount == 986)
+
+
+def test_error_response(example_ln_model):
+	# an honest payment gets retried multiple times but still fails
+	example_ln_model.set_deliberate_failure_behavior("Bob", "Charlie", 1)
+	sim = Simulator(example_ln_model)
+	sch = Schedule()
+	event = Event("Alice", "Dave", 100, 1, True)
+	sch.put_event(0, event)
+	num_events, num_failed = sim.execute_schedule(sch,
+		simulation_cutoff=2,
+		enforce_dust_limit=False,
+		no_balance_failures=True,
+		subtract_last_hop_upfront_fee_for_honest_payments=False,
+		keep_receiver_upfront_fee=True,
+		num_attempts_for_honest_payments=5)
+	assert(num_events == 1)
+	assert(num_failed == num_events)
+	

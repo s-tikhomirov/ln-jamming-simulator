@@ -1,4 +1,5 @@
 from queue import PriorityQueue
+from enum import Enum
 
 # There are two channel directions encoded with a boolean value.
 # Direction "dir0" (True) goes from smaller node ID to larger (alphanumerically).
@@ -7,6 +8,12 @@ from queue import PriorityQueue
 # We set global variables dir0 and dir1 for readability.
 dir0 = True
 dir1 = False
+
+class ErrorType(Enum):
+	LOW_BALANCE = "no_balance"
+	NO_SLOTS = "no_slots"
+	REJECTED_BY_RECEIVER = "rejected_by_receiver"
+	REJECTED_BY_ROUTER = "rejected_by_router"
 
 class ChannelDirection:
 	'''
@@ -21,11 +28,15 @@ class ChannelDirection:
 		is_enabled,
 		num_slots,
 		upfront_fee_function,
-		success_fee_function):
+		success_fee_function,
+		deliberately_fail_prob=0,
+		spoofing_error_type = ErrorType.REJECTED_BY_ROUTER):
 		self.is_enabled = is_enabled
 		self.upfront_fee_function = upfront_fee_function
 		self.success_fee_function = success_fee_function
 		self.slots = PriorityQueue(maxsize=num_slots)
+		self.deliberately_fail_prob = deliberately_fail_prob
+		self.spoofing_error_type = spoofing_error_type
 
 	def set_num_slots(self, num_slots, copy_existing_htlcs=False):
 		# Initialize slots to a PriorityQueue of a given maxsize.
@@ -68,5 +79,6 @@ class ChannelDirection:
 		s += "\nis enabled:	" + str(self.is_enabled)
 		s += "\nbusy slots:	" + str(self.slots.qsize())
 		s += "\nmax slots:	" + str(self.slots.maxsize)
+		s += "\nslots full?	" + str(self.slots.full())
 		return s
 
