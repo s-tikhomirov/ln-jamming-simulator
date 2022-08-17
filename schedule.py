@@ -2,13 +2,32 @@ from queue import PriorityQueue
 from random import choice
 from string import hexdigits
 
-from params import PaymentFlowParams, ProtocolParams, PaymentFlowParams
 
 class Event:
 	'''
 		An event is a planned Payment that is stored in a Schedule.
 	'''
+
 	def __init__(self, sender, receiver, amount, processing_delay, desired_result):
+		'''
+			- sender
+				The sender of the payment.
+
+			- receiver
+				The receiver of the payment.
+
+			- amount
+				The amount the receiver will receive if the payment succeeds.
+				(Whether or not to exclude last-hop upfront fee is decided on Payment construction.)
+
+			- processing delay
+				How much would it take an HTLC to resolve,
+				_if_ the corresponding payment reaches the receiver.
+				(Otherwise, no HTLC is stored, hence the processing delay is zero.)
+
+			- desired_result
+				True for honest payments, False for jams.
+		'''
 		self.id = "".join(choice(hexdigits) for i in range(6))
 		self.sender = sender
 		self.receiver = receiver
@@ -31,10 +50,12 @@ class Schedule:
 	'''
 		A schedule of Events (to-be payments) to be executed by a Simulator.
 	'''
+
 	def __init__(self):
 		self.schedule = PriorityQueue()
 
-	def generate_schedule(self,
+	def generate_schedule(
+		self,
 		senders_list,
 		receivers_list,
 		amount_function,
@@ -54,7 +75,7 @@ class Schedule:
 
 			- payment_processing_delay_function
 				A function to generate each next processing delay (encoded within the payment).
-			
+
 			- payment_generation_delay_function
 				A function to generate a delay until the next Event in the Schedule.
 
@@ -106,6 +127,5 @@ class Schedule:
 
 	def __repr__(self):
 		s = "\nSchedule:\n"
-		s += "\n".join([ str(str(e[0]) + "	" + str(e[1])) for e in self.get_all_events()])
+		s += "\n".join([str(str(e[0]) + "	" + str(e[1])) for e in self.get_all_events()])
 		return s
-

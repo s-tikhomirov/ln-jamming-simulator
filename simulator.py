@@ -1,18 +1,11 @@
-from lnmodel import LNModel
-from schedule import Schedule, Event
 from payment import Payment
 from channel_selection import lowest_fee_enabled_channel
 from lnmodel import RevenueType
 from channel import dir0, dir1, ErrorType
+from params import ProtocolParams
 
-from random import random, choice
-from string import hexdigits
+from random import random
 
-from params import (
-	honest_amount_function,
-	honest_proccesing_delay_function,
-	honest_generation_delay_function,
-	ProtocolParams)
 
 def body_for_amount(target_amount, upfront_fee_function, precision=1, max_steps=50):
 	'''
@@ -66,7 +59,8 @@ class Simulator:
 	def __init__(self, ln_model):
 		self.ln_model = ln_model
 
-	def execute_schedule(self,
+	def execute_schedule(
+		self,
 		schedule,
 		simulation_cutoff,
 		target_node_pair=None,
@@ -102,7 +96,7 @@ class Simulator:
 			- subtract_last_hop_upfront_fee_for_honest_payments
 				Apply body_for_amount at Payment construction for honest payment.
 				Jams are always constructed without such adjustment to stay above the dust limit at all hops.
-			
+
 			- keep_receiver_upfront_fee
 				Not nullify receiver's upfront fee revenue.
 				If amount had been adjusted at Payment construction, the receiver's upfront fee is part of payment.
@@ -113,7 +107,7 @@ class Simulator:
 				The maximum number of attempts to send an honest payment.
 
 			- max_num_attempts_per_route_jamming
-				The maximul number of attempts to send a jam (expected to be higher than that of honest payments).
+				The maximul number of attempts to send a jam (which is probably higher than that for honest payments).
 		'''
 		now, num_sent, num_failed, num_reached_receiver = -1, 0, 0, 0
 		# we make the first attempt unconditionally
@@ -130,7 +124,7 @@ class Simulator:
 				#print("Reached simulation end time.", now, simulation_cutoff)
 				break
 			#print("Got event:", event)
-			is_jam = event.desired_result == False
+			is_jam = event.desired_result is False
 			if target_node_pair is not None:
 				router_1, router_2 = target_node_pair
 				routes = self.ln_model.get_routes_via_hop(event.sender, router_1, router_2, event.receiver, event.amount)
@@ -222,9 +216,6 @@ class Simulator:
 			chosen_cid, chosen_ch_dir = lowest_fee_enabled_channel(channels_dict, p.amount, direction)
 			#print("Chose channel to forward:", chosen_cid)
 			#print(chosen_ch_dir)
-			
-			# TODO: channel selection functions may be different at payment creation and handling.
-			# Check here that the payment pays enough fees?
 
 			# Deliberately fail the payment with some probability
 			# (not used in experiments but useful for testing response to errors)
@@ -243,7 +234,7 @@ class Simulator:
 					#print("Low balance:", u_node, "fails payment")
 					erring_node, error_type = u_node, ErrorType.LOW_BALANCE
 					break
-						
+
 			# Check if there is a free slot
 			has_free_slot, resolution_time, released_htlc = chosen_ch_dir.ensure_free_slot(now)
 			if released_htlc is not None:
@@ -268,7 +259,7 @@ class Simulator:
 			#print("Constructed htlc:", in_flight_htlc)
 			tmp_cid_to_htlcs[(u_node, d_node)] = chosen_cid, direction, now + p.processing_delay, in_flight_htlc
 
-			# Unwrap the next onion level for the next hop 
+			# Unwrap the next onion level for the next hop
 			p = p.downstream_payment
 
 		#print("Reached receiver:", reached_receiver)
@@ -277,7 +268,7 @@ class Simulator:
 
 		# For each channel in the route, store HTLCs for the current payment
 		if reached_receiver:
-			if payment.desired_result == False:
+			if payment.desired_result is False:
 				error_type = ErrorType.FAILED_DELIBERATELY
 			for u_node, d_node in hops:
 				if (u_node, d_node) in tmp_cid_to_htlcs:
@@ -285,10 +276,10 @@ class Simulator:
 					#print("Storing htlc for", chosen_cid, "to resolve at time", resolution_time, ":", in_flight_htlc)
 					ch_dir = self.ln_model.channel_graph.get_edge_data(u_node, d_node)[chosen_cid]["directions"][direction]
 					ch_dir.store_htlc(resolution_time, in_flight_htlc)
-		
+
 		assert(reached_receiver or error_type is not None)
 		return reached_receiver, erring_node, error_type
-		
+
 	def finalize_in_flight_htlcs(self, now):
 		'''
 			Apply all in-flight htlcs with timestamp < now.
@@ -301,7 +292,6 @@ class Simulator:
 					ch_dir = channels_dict[cid]["directions"][direction]
 					if ch_dir is None:
 						continue
-					time_exceeded = False
 					while not ch_dir.slots.empty():
 						next_htlc_time = ch_dir.slots.queue[0][0]
 						#print("Next HTLC resolution time is:", next_htlc_time)
@@ -355,10 +345,11 @@ class Simulator:
 			#print("Wrapping payment w.r.t. fee policy of", u_node, d_node)
 			channels_dict = self.ln_model.channel_graph.get_edge_data(u_node, d_node)
 			#print("Channels in this hop:", list(channels_dict.keys()))
-			chosen_cid, chosen_ch_dir = lowest_fee_enabled_channel(channels_dict, amount, direction = (u_node < d_node))
+			chosen_cid, chosen_ch_dir = lowest_fee_enabled_channel(channels_dict, amount, direction=(u_node < d_node))
 			#print(chosen_ch_dir)
 			is_last_hop = p is None
-			p = Payment(p,
+			p = Payment(
+				p,
 				d_node,
 				chosen_ch_dir.upfront_fee_function,
 				chosen_ch_dir.success_fee_function,
@@ -375,8 +366,8 @@ class Simulator:
 			Resolve an HTLC. If (and only if) its desired result is True,
 			pass success-case fee from the upstream node to the downstream node.
 		'''
-		assert(resolution_time <= now)	# must have been checked before popping
-		if htlc.desired_result == True:
+		assert(resolution_time <= now)  # must have been checked before popping
+		if htlc.desired_result is True:
 			#print("Applying", htlc)
-			self.ln_model.subtract_revenue(	u_node, RevenueType.SUCCESS, htlc.success_fee)
-			self.ln_model.add_revenue(		d_node, RevenueType.SUCCESS, htlc.success_fee)
+			self.ln_model.subtract_revenue(u_node, RevenueType.SUCCESS, htlc.success_fee)
+			self.ln_model.add_revenue(d_node, RevenueType.SUCCESS, htlc.success_fee)

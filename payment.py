@@ -1,20 +1,16 @@
-from random import random, choice
+from random import choice
 from string import hexdigits
 
-'''
-	A Payment encodes the channel state update between two nodes.
-'''
+
 class Payment:
 	'''
-
-			Construct a payment.
-
-			A payment represents value transfers within one hop.
-			A payment is 'nested': a payment contains the downstream payment.
-			For the inner-most payment, downstream payment is None.
+		A Payment encodes the channel state update between two nodes.
+		A payment is 'nested': a payment contains the downstream payment.
+		For the inner-most payment, downstream payment is None.
 	'''
-	
-	def __init__(self,
+
+	def __init__(
+		self,
 		downstream_payment,
 		downstream_node,
 		upfront_fee_function,
@@ -37,7 +33,7 @@ class Payment:
 
 				desired_result
 					True for honest payments, False for jams.
-				
+
 				processing_delay
 					How much a payment takes to process.
 					A payment incurs the same processing delay on all hops in the route.
@@ -80,9 +76,8 @@ class Payment:
 		# upfront-fee is calculated based on the _amount_
 		downstream_upfront_fee = 0 if downstream_payment is None else downstream_payment.upfront_fee
 		self.upfront_fee = upfront_fee_function(self.amount) + downstream_upfront_fee
-		
 
-	def __str__(self):
+	def __repr__(self):
 		s = "\nPayment with amount: 	" + str(self.amount)
 		s += "\n  of which body:	" + str(self.body)
 		s += "\n  success-case fee:	" + str(self.success_fee)

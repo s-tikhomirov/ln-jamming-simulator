@@ -2,23 +2,24 @@ from channel import ChannelDirection
 from simulator import InFlightHtlc
 import pytest
 
-import hashlib
-
 verbose = False
+
 
 @pytest.fixture
 def example_channel_direction():
 	cd = ChannelDirection(
 		is_enabled=True,
 		num_slots=2,
-		upfront_fee_function=lambda:0,
-		success_fee_function=lambda:0)
+		upfront_fee_function=lambda: 0,
+		success_fee_function=lambda: 0)
 	return cd
+
 
 @pytest.fixture
 def example_resolution_times():
 	times = (1, 5, 6, 4)
 	return times
+
 
 @pytest.fixture
 def example_in_flight_htlcs():
@@ -67,4 +68,3 @@ def test_channel_direction(example_channel_direction, example_resolution_times, 
 	# Queue is full, and we can't pop anything: can't store htlc 3
 	assert(not has_slot)
 	assert(released_htlc is None)
-

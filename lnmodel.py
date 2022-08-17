@@ -1,24 +1,21 @@
-import networkx as nx
-import json
+from enum import Enum
 from functools import partial
 from queue import PriorityQueue
+import networkx as nx
 
-from channel import ChannelDirection, dir0, dir1
+from channel import ChannelDirection, ErrorType
 from params import K, M
 
-from enum import Enum
 
 class RevenueType(Enum):
 	UPFRONT = "upfront_revenue"
 	SUCCESS = "success_revenue"
 
-from channel import ErrorType
 
 def get_channel_graph_from_json(snapshot_json, default_num_slots):
-	# Parse a Core Lightning listchannels.json snapshot
-	# into a NetworkX MultiGraph.
+	# Convert a JSON object (scheme: CLN's listchannels) into an UNDIRECTED graph (MultiGraph).
 	# Each edge corresponds to a channel. Edge id = channel id.
-	# Edge attributes: capacity, directions : [ChannelDirection0, ChannelDirection1]
+	# Edge attributes: capacity, directions: [ChannelDirection0, ChannelDirection1]
 	g = nx.MultiGraph()
 	for cd in snapshot_json["channels"]:
 		cid = cd["short_channel_id"]
@@ -26,24 +23,24 @@ def get_channel_graph_from_json(snapshot_json, default_num_slots):
 		src, dst = cd["source"], cd["destination"]
 		direction = src < dst
 		# Fees may be set manually later in testing snapshots
-		base_fee_success = cd["base_fee_millisatoshi"] / K 			if "base_fee_millisatoshi" in cd else None
-		fee_rate_success = cd["fee_per_millionth"] / M 				if "fee_per_millionth" in cd else None
-		base_fee_upfront = cd["base_fee_millisatoshi_upfront"] / K 	if "base_fee_millisatoshi_upfront" in cd else None
-		fee_rate_upfront = cd["fee_per_millionth_upfront"] / M 		if "fee_per_millionth_upfront" in cd else None
+		base_fee_success = cd["base_fee_millisatoshi"] / K if "base_fee_millisatoshi" in cd else None
+		fee_rate_success = cd["fee_per_millionth"] / M if "fee_per_millionth" in cd else None
+		base_fee_upfront = cd["base_fee_millisatoshi_upfront"] / K if "base_fee_millisatoshi_upfront" in cd else None
+		fee_rate_upfront = cd["fee_per_millionth_upfront"] / M if "fee_per_millionth_upfront" in cd else None
 		cd = ChannelDirection(
-			is_enabled = cd["active"],
-			num_slots = default_num_slots,
-			upfront_fee_function = partial(lambda b, r, a : b + r * a, base_fee_upfront, fee_rate_upfront),
-			success_fee_function = partial(lambda b, r, a : b + r * a, base_fee_success, fee_rate_success)
-			)
+			is_enabled=cd["active"],
+			num_slots=default_num_slots,
+			upfront_fee_function=partial(lambda b, r, a: b + r * a, base_fee_upfront, fee_rate_upfront),
+			success_fee_function=partial(lambda b, r, a: b + r * a, base_fee_success, fee_rate_success)
+		)
 		for node in [src, dst]:
 			if node not in g.nodes:
 				g.add_node(node, upfront_revenue=0, success_revenue=0)
 		if src not in g.neighbors(dst):
-			g.add_edge(src, dst, cid, capacity=capacity, directions = [None, None])
+			g.add_edge(src, dst, cid, capacity=capacity, directions=[None, None])
 		else:
 			if cid not in (value[2] for value in g.edges(src, dst, keys=True)):
-				g.add_edge(src, dst, cid, capacity=capacity, directions = [None, None])
+				g.add_edge(src, dst, cid, capacity=capacity, directions=[None, None])
 		ch = g[src][dst][cid]
 		# if we encounter the same cid in the snapshot, it must have the same capacity
 		assert(capacity == ch["capacity"])
@@ -52,14 +49,15 @@ def get_channel_graph_from_json(snapshot_json, default_num_slots):
 		ch["directions"][direction] = cd
 	return g
 
+
 def get_routing_graph_from_json(snapshot_json):
-	# Get a DIRECTED MULTI-graph from the same JSON for routing.
+	# Get a DIRECTED graph (MultiDiGraph) for routing from the same JSON object.
 	# Each edge corresponds to an enabled (i.e., "active") channel direction.
 	# We only parse cid and capacity (it's relevant for routing).
-	# All other attributes (fee functions, revenues) are stored in the channel graph.
+	# All other attributes (fee functions, revenues) are stored in the undirected channel graph.
 	g = nx.MultiDiGraph()
 	for cd in snapshot_json["channels"]:
-		if cd["active"] == False:
+		if not cd["active"]:
 			continue
 		cid = cd["short_channel_id"]
 		capacity = cd["satoshis"]
@@ -96,7 +94,7 @@ class LNModel:
 		#print("Filtering out edges with capacity < ", amount)
 		def filter_edges(n1, n2, cid):
 			return self.routing_graph[n1][n2][cid]["capacity"] >= amount
-		return nx.subgraph_view(self.routing_graph, lambda _:True, filter_edges)
+		return nx.subgraph_view(self.routing_graph, lambda _: True, filter_edges)
 
 	def get_routes(self, sender, receiver, amount):
 		# A routes iterator for a given amount from sender to receiver
@@ -113,7 +111,7 @@ class LNModel:
 		else:
 			routes = nx.all_shortest_paths(routing_graph, sender, receiver)
 			route = next(routes, None)
-			while route != None:
+			while route is not None:
 				#print("Yielding", route)
 				yield route
 				route = next(routes, None)
@@ -132,16 +130,16 @@ class LNModel:
 		elif not nx.has_path(routing_graph, sender, router_1):
 			#print("No path from sender", sender, "to router_1", router)
 			yield from ()
-		elif not router_1 in routing_graph.predecessors(router_2):
+		elif router_1 not in routing_graph.predecessors(router_2):
 			#print("No (big enough) channel from", router_1, "to", router_2)
 			yield from ()
-		elif not router_2 in routing_graph.predecessors(receiver):
+		elif router_2 not in routing_graph.predecessors(receiver):
 			#print("No (big enough) channel from", router_2, "to", receiver)
 			yield from ()
 		else:
 			routes_to_router = nx.all_shortest_paths(routing_graph, sender, router_1)
 			route = next(routes_to_router, None)
-			while route != None:
+			while route is not None:
 				route.append(router_2)
 				route.append(receiver)
 				yield route
@@ -150,12 +148,12 @@ class LNModel:
 	def set_fee_function(self, node_1, node_2, revenue_type, base, rate):
 		# Set a fee function of form f(a) = b + ra to the channel between node_1 and node_2.
 		# Note: we assume there is at most one channel between the nodes!
-		if not node_1 in self.channel_graph.neighbors(node_2):
+		if node_1 not in self.channel_graph.neighbors(node_2):
 			#print("Can't set fee: no channel between", node_1, node_2)
 			pass
 		else:
 			ch_dir = self.get_only_ch_dir(node_1, node_2)
-			fee_function = partial(lambda b, r, a : b + r * a, base, rate)
+			fee_function = partial(lambda b, r, a: b + r * a, base, rate)
 			if revenue_type == RevenueType.UPFRONT:
 				ch_dir.upfront_fee_function = fee_function
 			elif revenue_type == RevenueType.SUCCESS:
@@ -184,8 +182,7 @@ class LNModel:
 		ch_dir = next(iter(ch_dict.values()))["directions"][direction]
 		return ch_dir
 
-	def set_deliberate_failure_behavior(self, node_1, node_2, prob,
-		spoofing_error_type = ErrorType.FAILED_DELIBERATELY):
+	def set_deliberate_failure_behavior(self, node_1, node_2, prob, spoofing_error_type=ErrorType.FAILED_DELIBERATELY):
 		ch_dir = self.get_only_ch_dir(node_1, node_2)
 		ch_dir.deliberately_fail_prob = prob
 		ch_dir.spoofing_error_type = spoofing_error_type
@@ -199,7 +196,7 @@ class LNModel:
 			print("Upfront:", upfront_revenue)
 			print("Success:", success_revenue)
 			print("Total:", upfront_revenue + success_revenue)
-			
+
 	def reset_revenues(self):
 		#print("Resetting revenues")
 		for node in self.channel_graph.nodes:
