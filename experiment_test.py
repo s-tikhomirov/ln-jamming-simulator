@@ -85,8 +85,8 @@ def test_experiment_balance_failures_multiple_jamming_attempts(example_experimen
 def assert_results_correctness(experiment, simulation_duration, default_num_slots):
 	# the number of jams is constant and pre-determined if no_balance_failures is True
 	expected_num_jams = int(1 + floor(simulation_duration / experiment.jam_delay)) * (default_num_slots + 1)
-	for i in range(len(experiment.results["results"])):
-		stats = experiment.results["results"][i]["stats"]
+	for i in range(len(experiment.results["simulations"])):
+		stats = experiment.results["simulations"][i]["stats"]
 		assert(stats["honest"]["num_failed"] <= stats["honest"]["num_sent"])
 		if experiment.num_simulations == 1 and experiment.max_num_attempts_per_route_jamming == 1:
 			assert(stats["honest"]["num_sent"] == stats["honest"]["num_failed"] + stats["honest"]["num_reached_receiver"])
@@ -100,12 +100,12 @@ def assert_results_correctness(experiment, simulation_duration, default_num_slot
 			assert(stats[experiment_type]["num_reached_receiver"] <= stats[experiment_type]["num_sent"])
 
 	# everyone's revenue under jamming is zero with zero upfront fees
-	zero_upfront_fee_result = [r for r in experiment.results["results"] if (
+	zero_upfront_fee_result = [r for r in experiment.results["simulations"] if (
 		r["upfront_base_coeff"] == 0 and r["upfront_rate_coeff"] == 0)]
 	jamming_revenues = zero_upfront_fee_result[0]["revenues"]["jamming"]
 	
 	# sender's balance is non-positive, others' revenues are non-negative
-	for r in experiment.results["results"]:
+	for r in experiment.results["simulations"]:
 		if stats["honest"]["num_sent"] > 0:
 			assert(r["revenues"]["honest"]["Alice"] < 0)
 			assert(r["revenues"]["honest"]["Bob"] > 0)

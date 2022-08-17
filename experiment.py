@@ -133,20 +133,23 @@ class Experiment:
 				"revenues": revenues }
 				simulation_series_results.append(result)
 		results = {
-		"simulation_duration": self.simulation_duration,
-		"num_simulations": self.num_simulations,
-		"success_base_fee": self.success_base_fee,
-		"success_fee_rate": self.success_fee_rate,
-		"no_balance_failures": self.no_balance_failures,
-		"keep_receiver_upfront_fee": self.keep_receiver_upfront_fee,
-		"default_num_slots": self.default_num_slots,
-		"max_num_attempts_per_route_honest": self.max_num_attempts_per_route_honest,
-		"dust_limit": self.dust_limit,
-		"honest_payment_every_seconds": self.honest_payment_every_seconds,
-		"min_processing_delay": self.min_processing_delay,
-		"expected_extra_processing_delay": self.expected_extra_processing_delay,
-		"jam_delay": self.jam_delay,
-		"results": sorted(simulation_series_results, key = lambda d: (d["upfront_base_coeff"], d["upfront_rate_coeff"]), reverse = False)
+		"params": {
+			"simulation_duration": self.simulation_duration,
+			"num_simulations": self.num_simulations,
+			"success_base_fee": self.success_base_fee,
+			"success_fee_rate": self.success_fee_rate,
+			"no_balance_failures": self.no_balance_failures,
+			"keep_receiver_upfront_fee": self.keep_receiver_upfront_fee,
+			"default_num_slots": self.default_num_slots,
+			"max_num_attempts_per_route_honest": self.max_num_attempts_per_route_honest,
+			"max_num_attempts_per_route_jamming": self.max_num_attempts_per_route_jamming,
+			"dust_limit": self.dust_limit,
+			"honest_payment_every_seconds": self.honest_payment_every_seconds,
+			"min_processing_delay": self.min_processing_delay,
+			"expected_extra_processing_delay": self.expected_extra_processing_delay,
+			"jam_delay": self.jam_delay
+		},
+		"simulations": sorted(simulation_series_results, key = lambda d: (d["upfront_base_coeff"], d["upfront_rate_coeff"]), reverse = False)
 		}
 		self.results = results
 
@@ -157,10 +160,6 @@ class Experiment:
 	def results_to_csv_file(self, timestamp):
 		with open("results/" + str(timestamp) + "-results" +".csv", "w", newline="") as f:
 			writer = csv.writer(f, delimiter = ",", quotechar="'", quoting=csv.QUOTE_MINIMAL)
-			for name in self.results:
-				if name != "results":
-					writer.writerow([name, self.results[name]])
-			writer.writerow("")
 			writer.writerow([
 				"upfront_base_coeff",
 				"upfront_rate_coeff",
@@ -179,7 +178,7 @@ class Experiment:
 				"d_h_revenue",
 				"d_j_revenue"
 				])
-			for result in self.results["results"]:
+			for result in self.results["simulations"]:
 				writer.writerow([
 					result["upfront_base_coeff"],
 					result["upfront_rate_coeff"],
@@ -198,4 +197,7 @@ class Experiment:
 					result["revenues"]["honest"]["Dave"],
 					result["revenues"]["jamming"]["Dave"]
 					])
+			writer.writerow("")
+			for param_name in self.results["params"]:
+				writer.writerow([param_name, self.results["params"][param_name]])
 
