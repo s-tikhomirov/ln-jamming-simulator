@@ -5,6 +5,7 @@ import pytest
 from simulator import Simulator, body_for_amount
 from schedule import Schedule, Event
 from lnmodel import LNModel, RevenueType
+from channel import ErrorType
 from params import honest_amount_function, honest_proccesing_delay_function, honest_generation_delay_function
 
 TEST_SNAPSHOT_FILENAME = "./snapshots/listchannels_test.json"
@@ -252,21 +253,22 @@ def test_error_response_honest(example_ln_model):
 	sch = Schedule()
 	event = Event("Alice", "Dave", 100, 1, True)
 	sch.put_event(0, event)
-	max_num_attempts_per_route = 5
+	max_num_attempts_per_route_honest = 5
 	num_sent, num_failed, num_reached_receiver = sim.execute_schedule(sch,
 		simulation_cutoff=2,
 		enforce_dust_limit=False,
 		no_balance_failures=True,
 		subtract_last_hop_upfront_fee_for_honest_payments=False,
 		keep_receiver_upfront_fee=True,
-		max_num_attempts_per_route=max_num_attempts_per_route)
-	assert(num_sent == max_num_attempts_per_route)
+		max_num_attempts_per_route_honest=max_num_attempts_per_route_honest)
+	assert(num_sent == max_num_attempts_per_route_honest)
 	assert(num_failed == num_sent)
 	assert(num_reached_receiver == 0)
 
 
 def test_error_response_jamming(example_ln_model):
-	example_ln_model.set_deliberate_failure_behavior("Bob", "Charlie", prob = 1)
+	example_ln_model.set_deliberate_failure_behavior("Bob", "Charlie",
+		prob = 1, spoofing_error_type=ErrorType.LOW_BALANCE)
 	example_ln_model.set_num_slots("Alice", "Bob", 100)
 	example_ln_model.set_num_slots("Charlie", "Dave", 100)
 	sim = Simulator(example_ln_model)
@@ -275,7 +277,8 @@ def test_error_response_jamming(example_ln_model):
 	jam_processing_delay = 4
 	event = Event("Alice", "Dave", 100, jam_processing_delay, False)
 	sch.put_event(0, event)
-	max_num_attempts_per_route 	= 1
+	max_num_attempts_per_route_honest = 1
+	max_num_attempts_per_route_jamming = 10
 	num_sent, num_failed, num_reached_receiver = sim.execute_schedule(sch,
 		target_node_pair=("Bob", "Charlie"),
 		jam_with_insertion=True,
@@ -284,7 +287,8 @@ def test_error_response_jamming(example_ln_model):
 		no_balance_failures=True,
 		subtract_last_hop_upfront_fee_for_honest_payments=False,
 		keep_receiver_upfront_fee=True,
-		max_num_attempts_per_route=max_num_attempts_per_route)
-	assert(num_sent == (1 + floor(simulation_cutoff / jam_processing_delay)) * max_num_attempts_per_route)
+		max_num_attempts_per_route_honest=max_num_attempts_per_route_honest,
+		max_num_attempts_per_route_jamming=max_num_attempts_per_route_jamming)
+	assert(num_sent == (1 + floor(simulation_cutoff / jam_processing_delay)) * max_num_attempts_per_route_jamming)
 	assert(num_failed == num_sent)
 	assert(num_reached_receiver == 0)

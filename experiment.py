@@ -19,7 +19,9 @@ class Experiment:
 		simulation_duration, num_simulations, 
 		success_base_fee, success_fee_rate,
 		no_balance_failures, keep_receiver_upfront_fee,
-		default_num_slots, max_num_attempts_per_route):
+		default_num_slots,
+		max_num_attempts_per_route_honest,
+		max_num_attempts_per_route_jamming):
 		self.simulation_duration = simulation_duration
 		self.num_simulations = num_simulations
 		self.success_base_fee = success_base_fee
@@ -27,7 +29,8 @@ class Experiment:
 		self.no_balance_failures = no_balance_failures
 		self.keep_receiver_upfront_fee = keep_receiver_upfront_fee
 		self.default_num_slots = default_num_slots
-		self.max_num_attempts_per_route = max_num_attempts_per_route
+		self.max_num_attempts_per_route_honest = max_num_attempts_per_route_honest
+		self.max_num_attempts_per_route_jamming = max_num_attempts_per_route_jamming
 		self.ln_model = LNModel(snapshot_json, default_num_slots = self.default_num_slots)
 		self.ln_model.set_fee_function_for_all(RevenueType.SUCCESS, self.success_base_fee, self.success_fee_rate)
 		self.simulator = Simulator(self.ln_model)
@@ -48,7 +51,7 @@ class Experiment:
 		self.target_node_pair = (target_node_1, target_node_2)
 
 	def run_simulation(self, is_jamming):
-		print("  Strating", "jamming" if is_jamming else "honest")
+		print("  Starting", "jamming" if is_jamming else "honest")
 		tmp_revenues = {}
 		tmp_num_sent, tmp_num_failed, tmp_num_reached_receiver = [], [], []
 		for node in self.ln_model.channel_graph.nodes:
@@ -72,7 +75,8 @@ class Experiment:
 					no_balance_failures=self.no_balance_failures,
 					keep_receiver_upfront_fee=self.keep_receiver_upfront_fee,
 					simulation_cutoff = self.simulation_duration,
-					max_num_attempts_per_route = self.max_num_attempts_per_route)
+					max_num_attempts_per_route_honest = self.max_num_attempts_per_route_honest,
+					max_num_attempts_per_route_jamming = self.max_num_attempts_per_route_jamming)
 			else:
 				schedule.generate_schedule(
 					senders_list = [self.sender],
@@ -86,7 +90,8 @@ class Experiment:
 					no_balance_failures=self.no_balance_failures,
 					keep_receiver_upfront_fee=self.keep_receiver_upfront_fee,
 					simulation_cutoff = self.simulation_duration,
-					max_num_attempts_per_route = self.max_num_attempts_per_route)
+					max_num_attempts_per_route_honest = self.max_num_attempts_per_route_honest,
+					max_num_attempts_per_route_jamming = self.max_num_attempts_per_route_jamming)
 			#print("Handled payments / failed / reached receiver:", num_sent, num_failed, num_reached_receiver)
 			tmp_num_sent.append(num_sent)
 			tmp_num_failed.append(num_failed)
@@ -135,7 +140,7 @@ class Experiment:
 		"no_balance_failures": self.no_balance_failures,
 		"keep_receiver_upfront_fee": self.keep_receiver_upfront_fee,
 		"default_num_slots": self.default_num_slots,
-		"max_num_attempts_per_route": self.max_num_attempts_per_route,
+		"max_num_attempts_per_route_honest": self.max_num_attempts_per_route_honest,
 		"dust_limit": self.dust_limit,
 		"honest_payment_every_seconds": self.honest_payment_every_seconds,
 		"min_processing_delay": self.min_processing_delay,

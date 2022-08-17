@@ -75,7 +75,8 @@ class Simulator:
 		no_balance_failures=False,
 		subtract_last_hop_upfront_fee_for_honest_payments=True,
 		keep_receiver_upfront_fee=False,
-		max_num_attempts_per_route=1):
+		max_num_attempts_per_route_honest=1,
+		max_num_attempts_per_route_jamming=1):
 		'''
 			Parameters:
 			- schedule
@@ -108,9 +109,11 @@ class Simulator:
 				Hence, technically this is not a revenue.
 				However, it may be useful to leave it to check for inveriants in tests (sum of all fees == 0).
 
-			- max_num_attempts_per_route
+			- max_num_attempts_per_route_honest
 				The maximum number of attempts to send an honest payment.
-				Note: jams have different retry logic: they are sent until the target is jammed.
+
+			- max_num_attempts_per_route_jamming
+				The maximul number of attempts to send a jam (expected to be higher than that of honest payments).
 		'''
 		now, num_sent, num_failed, num_reached_receiver = -1, 0, 0, 0
 		# we make the first attempt unconditionally
@@ -148,7 +151,7 @@ class Simulator:
 			#print("Receiver will get:", event.amount, "/ in payment body:", receiver_amount)
 			p = self.create_payment(route, receiver_amount, event.processing_delay, event.desired_result, enforce_dust_limit)
 			#print("Constructed payment:", p)
-			while num_attempts < (1 if is_jam else max_num_attempts_per_route):
+			while num_attempts < (1 if is_jam else max_num_attempts_per_route_honest):
 				num_attempts += 1
 				reached_receiver, erring_node, error_type = self.attempt_send_payment(
 					p, event.sender, now, no_balance_failures, keep_receiver_upfront_fee)
@@ -166,18 +169,23 @@ class Simulator:
 				else:
 					#print("Jam failed at", erring_node, error_type)
 					next_batch_time = now + event.processing_delay
-					if (error_type == ErrorType.LOW_BALANCE or 
-						error_type == ErrorType.FAILED_DELIBERATELY):
-						if num_jam_attempts_this_batch < max_num_attempts_per_route:
+					if error_type in (ErrorType.LOW_BALANCE, ErrorType.FAILED_DELIBERATELY):
+						if num_jam_attempts_this_batch < max_num_attempts_per_route_jamming:
+							# we didn't jam because of error, continue this batch
 							schedule.put_event(now, event)
 							num_jam_attempts_this_batch += 1
 						else:
+							# we've tried many times, haven't fully jammed, moving on to the next batch
+							#print("Coundn't fully jam target at time", now)
 							schedule.put_event(next_batch_time, event)
 							num_jam_attempts_this_batch = 1
 					elif error_type == ErrorType.NO_SLOTS:
 						sender, pre_receiver = route[0], route[-2]
 						if erring_node in (sender, pre_receiver):
 							#print("WARNING: Jammer's slots depleted. Allocate more slots to jammer's channels!")
+							pass
+						else:
+							#print("Fully jammed at time", now, ". Waiting until the next batch.")
 							pass
 						num_jam_attempts_this_batch = 1
 						schedule.put_event(next_batch_time, event)
@@ -203,7 +211,7 @@ class Simulator:
 		# A temporary data structure to store HTLCs before the payment reaches the receiver
 		# If the payment fails at a routing node, we don't remember in-flight HTLCs.
 		tmp_cid_to_htlcs, hops = dict(), []
-		#print("Attempt", num_attempts, "of", max_num_attempts_per_route)
+		#print("Attempt", num_attempts, "of", max_num_attempts_per_route_honest)
 		p, d_node = payment, sender
 		while p is not None:
 			u_node, d_node = d_node, p.downstream_node
@@ -263,7 +271,6 @@ class Simulator:
 			# Unwrap the next onion level for the next hop 
 			p = p.downstream_payment
 
-		assert(reached_receiver or error_type is not None)
 		#print("Reached receiver:", reached_receiver)
 		#print("erring_node:", erring_node)
 		#print("Temporarily saved htlcs:", tmp_cid_to_htlcs)
@@ -278,7 +285,8 @@ class Simulator:
 					#print("Storing htlc for", chosen_cid, "to resolve at time", resolution_time, ":", in_flight_htlc)
 					ch_dir = self.ln_model.channel_graph.get_edge_data(u_node, d_node)[chosen_cid]["directions"][direction]
 					ch_dir.store_htlc(resolution_time, in_flight_htlc)
-
+		
+		assert(reached_receiver or error_type is not None)
 		return reached_receiver, erring_node, error_type
 		
 	def finalize_in_flight_htlcs(self, now):
