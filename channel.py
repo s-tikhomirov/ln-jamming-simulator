@@ -53,6 +53,9 @@ class ChannelDirection:
 		self.is_enabled = is_enabled
 		self.upfront_fee_function = upfront_fee_function
 		self.success_fee_function = success_fee_function
+		# we remember num_slots in a separate variable because
+		# there is no way to get maxsize from a queue after it's created
+		self.num_slots = num_slots
 		self.slots = PriorityQueue(maxsize=num_slots)
 		self.deliberately_fail_prob = deliberately_fail_prob
 		self.spoofing_error_type = spoofing_error_type
@@ -63,6 +66,7 @@ class ChannelDirection:
 		# Optionally, copy over all HTLCs from the old queue.
 		# TODO: check that the new queue is larger than the old one if copy_existing_htlcs.
 		old_slots = self.slots
+		self.num_slots = num_slots
 		self.slots = PriorityQueue(maxsize=num_slots)
 		if copy_existing_htlcs:
 			if old_slots.qsize() > num_slots:

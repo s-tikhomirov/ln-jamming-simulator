@@ -1,5 +1,4 @@
 from payment import Payment
-from channel_selection import lowest_fee_enabled_channel
 from lnmodel import RevenueType
 from channel import dir0, dir1, ErrorType
 from params import ProtocolParams
@@ -56,42 +55,22 @@ class Simulator:
 		The resulting changes in revenues are written into the LNModel.
 	'''
 
-	def __init__(self, ln_model):
-		self.ln_model = ln_model
-
-	def execute_schedule(
+	def __init__(
 		self,
-		schedule,
-		simulation_cutoff,
-		target_node_pair=None,
-		jam_with_insertion=False,
-		enforce_dust_limit=True,
 		no_balance_failures=False,
+		enforce_dust_limit=True,
 		subtract_last_hop_upfront_fee_for_honest_payments=True,
 		keep_receiver_upfront_fee=False,
 		max_num_attempts_per_route_honest=1,
-		max_num_attempts_per_route_jamming=1):
+		max_num_attempts_per_route_jamming=1,
+		target_node_pair=None):
 		'''
-			Parameters:
-			- schedule
-				A Schedule to execute.
-
-			- simulation_cutoff
-				When to end the simulation.
-				Simulation end is different from the timestamp of the last event (which is earlier).
-				It determines which HTLCs to finalize after all Events are processed.
-
-			- target_node_pair
-				Build routes such that they pass through this pair of nodes, in this order (used in jamming).
-
-			- jam_with_insertion
-				Insert new jam Events into Schedule while processing existing Events, depending on jam results.
+			- no_balance_failures
+				If True, channels don't fail because of low balance.
+				If False, channels fails. Probability depends on amount and capacity.
 
 			- enforce_dust_limit
 				Not allow creating Payments with amount smaller than ProtocolParams["DUST_LIMIT"].
-
-			- no_balance_failures
-				Disable balance-based failures. Otherwise, fail with probability (amount / capacity).
 
 			- subtract_last_hop_upfront_fee_for_honest_payments
 				Apply body_for_amount at Payment construction for honest payment.
@@ -109,6 +88,31 @@ class Simulator:
 			- max_num_attempts_per_route_jamming
 				The maximul number of attempts to send a jam (which is probably higher than that for honest payments).
 		'''
+		self.enforce_dust_limit = enforce_dust_limit
+		self.no_balance_failures = no_balance_failures
+		self.subtract_last_hop_upfront_fee_for_honest_payments = subtract_last_hop_upfront_fee_for_honest_payments
+		self.keep_receiver_upfront_fee = keep_receiver_upfront_fee
+		self.max_num_attempts_per_route_honest = max_num_attempts_per_route_honest
+		self.max_num_attempts_per_route_jamming = max_num_attempts_per_route_jamming
+		self.target_node_pair = target_node_pair
+
+	def execute_schedule(self, schedule, ln_model):
+		'''
+			- ln_model
+				The LN graph to run the simulation against.
+
+			- schedule
+				A Schedule to execute.
+
+			- simulation_cutoff
+				When to end the simulation.
+				Simulation end is different from the timestamp of the last event (which is earlier).
+				It determines which HTLCs to finalize after all Events are processed.
+
+			- target_node_pair
+				Build routes such that they pass through this pair of nodes, in this order (used in jamming).
+		'''
+		self.ln_model = ln_model
 		now, num_sent, num_failed, num_reached_receiver = -1, 0, 0, 0
 		# we make the first attempt unconditionally
 		num_jam_attempts_this_batch = 1
@@ -120,13 +124,12 @@ class Simulator:
 				#print("Current time:", new_time)
 				pass
 			now = new_time
-			if now > simulation_cutoff:
+			if now > schedule.end_time:
 				#print("Reached simulation end time.", now, simulation_cutoff)
 				break
 			#print("Got event:", event)
-			is_jam = event.desired_result is False
-			if target_node_pair is not None:
-				router_1, router_2 = target_node_pair
+			if self.target_node_pair is not None:
+				router_1, router_2 = self.target_node_pair
 				routes = self.ln_model.get_routes_via_hop(event.sender, router_1, router_2, event.receiver, event.amount)
 			else:
 				# it's OK to use un-adjusted amount here: we allow for a safety margin for fees
@@ -137,34 +140,42 @@ class Simulator:
 			except StopIteration:
 				#print("No route, skipping event")
 				continue
-			if is_jam or not subtract_last_hop_upfront_fee_for_honest_payments:
+			is_jam = event.desired_result is False
+			if is_jam or not self.subtract_last_hop_upfront_fee_for_honest_payments:
 				receiver_amount = event.amount
 			else:
 				#print("Subtracting last-hop upfront fee from amount")
 				receiver_amount = self.get_adjusted_amount(event.amount, route)
 			#print("Receiver will get:", event.amount, "/ in payment body:", receiver_amount)
-			p = self.create_payment(route, receiver_amount, event.processing_delay, event.desired_result, enforce_dust_limit)
+			p = self.ln_model.create_payment(
+				route,
+				receiver_amount,
+				event.processing_delay,
+				event.desired_result,
+				self.enforce_dust_limit)
 			#print("Constructed payment:", p)
-			while num_attempts < (1 if is_jam else max_num_attempts_per_route_honest):
+			while num_attempts < (1 if is_jam else self.max_num_attempts_per_route_honest):
 				num_attempts += 1
 				reached_receiver, erring_node, error_type = self.attempt_send_payment(
-					p, event.sender, now, no_balance_failures, keep_receiver_upfront_fee)
+					p,
+					event.sender,
+					now)
 				if error_type is not None:
 					num_failed += 1
 				if reached_receiver:
 					num_reached_receiver += 1
 					break
 			num_sent += num_attempts
-			if is_jam and jam_with_insertion:
+			if is_jam:
 				if reached_receiver:
-					#print("Jam reached receiver")
+					print("Jam reached receiver")
 					#print("Putting this jam into schedule again:", now, event)
 					schedule.put_event(now, event)
 				else:
-					#print("Jam failed at", erring_node, error_type)
+					print("Jam failed at", erring_node, error_type)
 					next_batch_time = now + event.processing_delay
 					if error_type in (ErrorType.LOW_BALANCE, ErrorType.FAILED_DELIBERATELY):
-						if num_jam_attempts_this_batch < max_num_attempts_per_route_jamming:
+						if num_jam_attempts_this_batch < self.max_num_attempts_per_route_jamming:
 							# we didn't jam because of error, continue this batch
 							schedule.put_event(now, event)
 							num_jam_attempts_this_batch += 1
@@ -176,16 +187,16 @@ class Simulator:
 					elif error_type == ErrorType.NO_SLOTS:
 						sender, pre_receiver = route[0], route[-2]
 						if erring_node in (sender, pre_receiver):
-							#print("WARNING: Jammer's slots depleted. Allocate more slots to jammer's channels!")
+							print("WARNING: Jammer's slots depleted. Allocate more slots to jammer's channels!")
 							pass
 						else:
-							#print("Fully jammed at time", now, ". Waiting until the next batch.")
+							print("Fully jammed at time", now, ". Waiting until the next batch.")
 							pass
 						num_jam_attempts_this_batch = 1
 						schedule.put_event(next_batch_time, event)
 		#print("Schedule executed.")
 		#print("Handled events:", num_sent)
-		now = simulation_cutoff
+		now = schedule.end_time
 		#print("Now is simulation end time:", now)
 		# resolve all in-flight htlcs
 		#print("Finalizing in-flight HTLCs...")
@@ -193,7 +204,7 @@ class Simulator:
 		#print("Simulation complete.")
 		return num_sent, num_failed, num_reached_receiver
 
-	def attempt_send_payment(self, payment, sender, now, no_balance_failures, keep_receiver_upfront_fee):
+	def attempt_send_payment(self, payment, sender, now):
 		'''
 			Try sending a payment.
 			The route is encoded within the payment,
@@ -211,9 +222,8 @@ class Simulator:
 			u_node, d_node = d_node, p.downstream_node
 			hops.append((u_node, d_node))
 			# Choose a channel in the required direction
-			channels_dict = self.ln_model.channel_graph.get_edge_data(u_node, d_node)
 			direction = (u_node < d_node)
-			chosen_cid, chosen_ch_dir = lowest_fee_enabled_channel(channels_dict, p.amount, direction)
+			chosen_cid, chosen_ch_dir = self.ln_model.lowest_fee_enabled_channel(u_node, d_node, p.amount, direction)
 			#print("Chose channel to forward:", chosen_cid)
 			#print(chosen_ch_dir)
 
@@ -225,10 +235,10 @@ class Simulator:
 				break
 
 			# Model balance failures randomly, depending on the amount and channel capacity
-			if not no_balance_failures:
+			if not self.no_balance_failures:
 				# The channel must accommodate the amount plus the upfront fee
 				amount_plus_upfront_fee = p.amount + p.upfront_fee
-				prob_low_balance = amount_plus_upfront_fee / channels_dict[chosen_cid]["capacity"]
+				prob_low_balance = self.ln_model.prob_balance_failure(u_node, d_node, chosen_cid, amount_plus_upfront_fee)
 				#print("Probability of balance failure:", prob_low_balance)
 				if random() < prob_low_balance:
 					#print("Low balance:", u_node, "fails payment")
@@ -251,7 +261,7 @@ class Simulator:
 			self.ln_model.subtract_revenue(u_node, RevenueType.UPFRONT, p.upfront_fee)
 			# If the next payment is None, it means we've reached the receiver
 			reached_receiver = p.downstream_payment is None
-			if not reached_receiver or keep_receiver_upfront_fee:
+			if not reached_receiver or self.keep_receiver_upfront_fee:
 				self.ln_model.add_revenue(d_node, RevenueType.UPFRONT, p.upfront_fee)
 
 			# Construct an HTLC to be stored in a temporary dictionary until we know if receiver is reached
@@ -304,62 +314,16 @@ class Simulator:
 
 	def get_adjusted_amount(self, amount, route):
 		'''
-			Calculate the payment body, given what the receiver would receive and last hop fees.
-			Note: this assumes the last hop only has one channel!
+			Calculate the payment body, given what the receiver would receive and last hop (lowest) fees.
 		'''
 		# calculate the final receiver amount for a hop
 		# which means - subtracting last-hop upfront fee from the given amount
 		assert(len(route) >= 2)
 		receiver, pre_receiver = route[-1], route[-2]
 		direction = (pre_receiver < receiver)
-		last_channels_dict = self.ln_model.channel_graph.get_edge_data(receiver, pre_receiver)
-		assert(len(last_channels_dict) == 1)
-		chosen_cid, chosen_ch_dir = lowest_fee_enabled_channel(last_channels_dict, amount, direction)
+		chosen_cid, chosen_ch_dir = self.ln_model.lowest_fee_enabled_channel(receiver, pre_receiver, amount, direction)
 		receiver_amount = body_for_amount(amount, chosen_ch_dir.upfront_fee_function)
 		return receiver_amount
-
-	def create_payment(self, route, amount, processing_delay, desired_result, enforce_dust_limit):
-		'''
-			Create a Payment.
-
-			- route
-				A list of nodes for the payment to go through.
-
-			- amount
-				The amount for the receiver to receive.
-
-			- processing_delay
-				How much delay an HTLC created within this payment incurs, if not immediately failed.
-				This delay is the same on all hops.
-
-			- desired_result
-				Distinguishes honest payments (True) from jams (False).
-
-			- enforce_dust_limit
-				Throw an assertion if at any step payment amount is less than the dust limit.
-
-		'''
-		#print("Creating a payment for route", route, "and amount", amount)
-		p, u_nodes, d_nodes = None, route[:-1], route[1:]
-		for u_node, d_node in reversed(list(zip(u_nodes, d_nodes))):
-			#print("Wrapping payment w.r.t. fee policy of", u_node, d_node)
-			channels_dict = self.ln_model.channel_graph.get_edge_data(u_node, d_node)
-			#print("Channels in this hop:", list(channels_dict.keys()))
-			chosen_cid, chosen_ch_dir = lowest_fee_enabled_channel(channels_dict, amount, direction=(u_node < d_node))
-			#print(chosen_ch_dir)
-			is_last_hop = p is None
-			p = Payment(
-				p,
-				d_node,
-				chosen_ch_dir.upfront_fee_function,
-				chosen_ch_dir.success_fee_function,
-				desired_result if is_last_hop else None,
-				processing_delay if is_last_hop else None,
-				amount if is_last_hop else None)
-			if enforce_dust_limit:
-				assert(p.amount >= ProtocolParams["DUST_LIMIT"]), (p.amount, ProtocolParams["DUST_LIMIT"])
-		#print("Constructed payment:", p)
-		return p
 
 	def apply_htlc(self, resolution_time, htlc, u_node, d_node, now):
 		'''

@@ -30,6 +30,7 @@ PaymentFlowParams = {
 	# https://arxiv.org/abs/2004.00333 (Section 4.4)
 	"MIN_DELAY": 1,
 	"EXPECTED_EXTRA_DELAY": 3,
+	"JAM_DELAY": 7,
 
 	# in terms of exponential distribution, this is beta
 	# (aka scale, aka the inverse of rate lambda)

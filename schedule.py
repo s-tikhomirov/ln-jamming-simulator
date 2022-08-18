@@ -2,6 +2,13 @@ from queue import PriorityQueue
 from random import choice
 from string import hexdigits
 
+from params import (
+	honest_amount_function,
+	honest_proccesing_delay_function,
+	honest_generation_delay_function,
+	ProtocolParams,
+	PaymentFlowParams)
+
 
 class Event:
 	'''
@@ -51,18 +58,24 @@ class Schedule:
 		A schedule of Events (to-be payments) to be executed by a Simulator.
 	'''
 
-	def __init__(self):
+	def __init__(self, duration=0):
+		'''
+		- duration
+			A timestamp at which to stop Schedule generation.
+			Note: this is not the same as the timestamp of the last Event.
+			(E.g., for duration 30, the last event may be at timestamp 28.)
+		'''
 		self.schedule = PriorityQueue()
+		self.end_time = duration
 
-	def generate_schedule(
+	def populate(
 		self,
 		senders_list,
 		receivers_list,
 		amount_function,
 		desired_result,
 		payment_processing_delay_function,
-		payment_generation_delay_function,
-		scheduled_duration):
+		payment_generation_delay_function):
 		'''
 			- senders_list
 				Pick a sender uniformly from this list.
@@ -78,14 +91,9 @@ class Schedule:
 
 			- payment_generation_delay_function
 				A function to generate a delay until the next Event in the Schedule.
-
-			- scheduled_duration
-				A timestamp at which to stop Schedule generation.
-				Note: this is not the same as the timestamp of the last Event.
-				(E.g., for scheduled_duration 30, the last event may be at timestamp 28.)
 		'''
 		t = 0
-		while t < scheduled_duration:
+		while t < self.end_time:
 			sender = choice(senders_list)
 			receiver = choice(receivers_list)
 			if sender == receiver:
@@ -129,3 +137,29 @@ class Schedule:
 		s = "\nSchedule:\n"
 		s += "\n".join([str(str(e[0]) + "	" + str(e[1])) for e in self.get_all_events()])
 		return s
+
+
+def generate_honest_schedule(senders_list, receivers_list, duration):
+	schedule = Schedule(duration=duration)
+	schedule.populate(
+		senders_list=senders_list,
+		receivers_list=receivers_list,
+		amount_function=honest_amount_function,
+		desired_result=True,
+		payment_processing_delay_function=honest_proccesing_delay_function,
+		payment_generation_delay_function=honest_generation_delay_function)
+	return schedule
+
+
+def generate_jamming_schedule(sender, receiver, duration):
+	schedule = Schedule(duration=duration)
+	jam_amount = ProtocolParams["DUST_LIMIT"]
+	jam_delay = PaymentFlowParams["JAM_DELAY"]
+	first_jam = Event(
+		sender,
+		receiver,
+		amount=jam_amount,
+		processing_delay=jam_delay,
+		desired_result=False)
+	schedule.put_event(0, first_jam)
+	return schedule

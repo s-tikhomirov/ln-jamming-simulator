@@ -5,15 +5,14 @@ import pytest
 
 @pytest.fixture
 def example_schedule():
-	sch = Schedule()
-	sch.generate_schedule(
+	sch = Schedule(duration=10)
+	sch.populate(
 		senders_list=["Alice"],
 		receivers_list=["Bob"],
 		amount_function=lambda: 1000,
 		desired_result=True,
 		payment_processing_delay_function=lambda: 1,
-		payment_generation_delay_function=lambda: 3,
-		scheduled_duration=10)
+		payment_generation_delay_function=lambda: 3)
 	return sch
 
 

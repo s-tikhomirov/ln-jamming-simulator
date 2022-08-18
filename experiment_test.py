@@ -1,4 +1,5 @@
 from experiment import Experiment
+from lnmodel import LNModel
 
 from math import floor
 import pytest
@@ -33,8 +34,9 @@ def example_snapshot_json():
 
 @pytest.fixture
 def example_experiment(example_snapshot_json):
+	example_ln_model = LNModel(example_snapshot_json, default_num_slots=5)
 	experiment = Experiment(
-		example_snapshot_json,
+		example_ln_model,
 		simulation_duration=60,
 		num_runs_per_simulation=1,
 		success_base_fee=1,

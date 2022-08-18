@@ -101,15 +101,9 @@ def example_ln_model(example_snapshot_json):
 	return LNModel(example_snapshot_json, default_num_slots=2)
 
 
-@pytest.fixture
-def example_simulator(example_ln_model):
-	return Simulator(example_ln_model)
-
-
-def test_route_payment_creation(example_simulator):
-	sim = example_simulator
+def test_route_payment_creation(example_ln_model):
 	route = ["Alice", "Bob", "Charlie", "Dave"]
-	p = sim.create_payment(
+	p = example_ln_model.create_payment(
 		route,
 		amount=100,
 		processing_delay=2,
