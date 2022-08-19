@@ -1,0 +1,81 @@
+{
+   "channels": [
+      {
+         "source": "Alice",
+         "destination": "Hub",
+         "short_channel_id": "AHx0",
+         "satoshis": 1000000,
+         "active": true
+      },
+      {
+         "source": "Hub",
+         "destination": "Alice",
+         "short_channel_id": "AHx0",
+         "satoshis": 1000000,
+         "active": true
+      },
+      {
+         "source": "Bob",
+         "destination": "Hub",
+         "short_channel_id": "BHx0",
+         "satoshis": 1000000,
+         "active": true
+      },
+      {
+         "source": "Hub",
+         "destination": "Bob",
+         "short_channel_id": "BHx0",
+         "satoshis": 1000000,
+         "active": true
+      },
+      {
+         "source": "Charlie",
+         "destination": "Hub",
+         "short_channel_id": "CHx0",
+         "satoshis": 1000000,
+         "active": true
+      },
+      {
+         "source": "Hub",
+         "destination": "Charlie",
+         "short_channel_id": "CHx0",
+         "satoshis": 1000000,
+         "active": true
+      },
+      {
+         "source": "Dave",
+         "destination": "Hub",
+         "short_channel_id": "DHx0",
+         "satoshis": 1000000,
+         "active": true
+      },
+      {
+         "source": "Hub",
+         "destination": "Dave",
+         "short_channel_id": "DHx0",
+         "satoshis": 1000000,
+         "active": true
+      },
+      {
+         "source": "JammerSender",
+         "destination": "Alice",
+         "short_channel_id": "JsAx0",
+         "satoshis": 1000000,
+         "active": true
+      },
+      {
+         "source": "Dave",
+         "destination": "JammerReceiver",
+         "short_channel_id": "DJrx0",
+         "satoshis": 1000000,
+         "active": true
+      },
+      {
+         "source": "Bob",
+         "destination": "Charlie",
+         "short_channel_id": "BCx0",
+         "satoshis": 1000000,
+         "active": true
+      }
+   ]
+}

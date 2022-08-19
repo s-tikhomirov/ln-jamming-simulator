@@ -43,13 +43,6 @@ class Experiment:
 		self.success_base_fee = success_base_fee
 		self.success_fee_rate = success_fee_rate
 
-	def set_target_node_pair(self, target_node_1, target_node_2):
-		# The jammer sends all jams through the ch_dir
-		# from target_node_1 to target_node_2.
-		# ensure that there is a (directed) edge from target_node_1 to target_node_2
-		assert(target_node_1 in self.ln_model.routing_graph.predecessors(target_node_2))
-		self.target_node_pair = (target_node_1, target_node_2)
-
 	def run_simulations(self, schedule_generation_funciton, upfront_base_coeff_range, upfront_rate_coeff_range):
 		def run_simulation():
 			'''
@@ -88,7 +81,7 @@ class Experiment:
 		simulation_series_results = []
 		for upfront_base_coeff in upfront_base_coeff_range:
 			for upfront_rate_coeff in upfront_rate_coeff_range:
-				print("Starting simulation:", upfront_base_coeff, upfront_rate_coeff)
+				print("\nStarting simulation with upfront fee coefficients:", upfront_base_coeff, upfront_rate_coeff)
 				upfront_fee_base = self.success_base_fee * upfront_base_coeff
 				upfront_fee_rate = self.success_fee_rate * upfront_rate_coeff
 				self.ln_model.set_fee_function_for_all(RevenueType.UPFRONT, upfront_fee_base, upfront_fee_rate)
@@ -109,28 +102,28 @@ class Experiment:
 		upfront_base_coeff_range,
 		upfront_rate_coeff_range,
 		attackers_nodes,
-		target_node_pair,
 		attackers_slots_coeff=2):
 		'''
 			Run two simulations that only differ in schedule generation functions (honest and jamming)
 		'''
-		simulation_series_results_honest = self.run_simulations(
-			schedule_generation_funciton_honest,
-			upfront_base_coeff_range,
-			upfront_rate_coeff_range)
-		#print("Honest simulation complete")
+
 		# give attacker's channels twice as many slots as the default number of slots
-		# TODO: in graph simulations, exclude attacker's channels from honest payment flow
 		for attackers_node in attackers_nodes:
 			for neighbor in self.ln_model.channel_graph.neighbors(attackers_node):
 				self.ln_model.set_num_slots(
 					attackers_node,
 					neighbor,
 					attackers_slots_coeff * self.ln_model.default_num_slots)
-		self.simulator.target_node_pair = target_node_pair
+
+		# FIXME: order matters here for some reason: run honest experiments first, then jamming
 		simulation_series_results_jamming = self.run_simulations(
 			schedule_generation_funciton_jamming,
 			upfront_base_coeff_range,
 			upfront_rate_coeff_range)
-		#print("Jamming simulation complete")
+
+		simulation_series_results_honest = self.run_simulations(
+			schedule_generation_funciton_honest,
+			upfront_base_coeff_range,
+			upfront_rate_coeff_range)
+
 		return simulation_series_results_honest, simulation_series_results_jamming

@@ -60,8 +60,7 @@ class Simulator:
 		no_balance_failures=False,
 		enforce_dust_limit=True,
 		subtract_last_hop_upfront_fee_for_honest_payments=True,
-		keep_receiver_upfront_fee=False,
-		target_node_pair=None):
+		keep_receiver_upfront_fee=False):
 		'''
 			- max_num_attempts_per_route_honest
 				The maximum number of attempts to send an honest payment.
@@ -85,9 +84,6 @@ class Simulator:
 				If amount had been adjusted at Payment construction, the receiver's upfront fee is part of payment.
 				Hence, technically this is not a revenue.
 				However, it may be useful to leave it to check for inveriants in tests (sum of all fees == 0).
-
-			- target_node_pair
-				If set, all routes will go through these nodes (in this order).
 		'''
 		self.enforce_dust_limit = enforce_dust_limit
 		self.no_balance_failures = no_balance_failures
@@ -95,7 +91,6 @@ class Simulator:
 		self.keep_receiver_upfront_fee = keep_receiver_upfront_fee
 		self.max_num_attempts_per_route_honest = max_num_attempts_per_route_honest
 		self.max_num_attempts_per_route_jamming = max_num_attempts_per_route_jamming
-		self.target_node_pair = target_node_pair
 
 	def execute_schedule(self, schedule, ln_model):
 		self.ln_model = ln_model
@@ -114,10 +109,11 @@ class Simulator:
 				#print("Reached simulation end time.", now, simulation_cutoff)
 				break
 			#print("Got event:", event)
-			if self.target_node_pair is not None:
-				router_1, router_2 = self.target_node_pair
-				routes = self.ln_model.get_routes_via_hop(event.sender, router_1, router_2, event.receiver, event.amount)
+			if event.must_route_via is not None:
+				#print("Finding route via", event.must_route_via)
+				routes = self.ln_model.get_routes_via_nodes(event.sender, event.must_route_via, event.receiver, event.amount)
 			else:
+				#print("Finding route via any node")
 				# it's OK to use un-adjusted amount here: we allow for a safety margin for fees
 				routes = self.ln_model.get_routes(event.sender, event.receiver, event.amount)
 			try:
@@ -139,16 +135,16 @@ class Simulator:
 				event.processing_delay,
 				event.desired_result,
 				self.enforce_dust_limit)
+			#print("Sender:", event.sender)
 			#print("Constructed payment:", p)
 			while num_attempts < (1 if is_jam else self.max_num_attempts_per_route_honest):
 				num_attempts += 1
-				reached_receiver, erring_node, error_type = self.attempt_send_payment(
-					p,
-					event.sender,
-					now)
+				reached_receiver, erring_node, error_type = self.attempt_send_payment(p, event.sender, now)
 				if error_type is not None:
+					#print("Payment failed after", num_attempts, "attempts.")
 					num_failed += 1
 				if reached_receiver:
+					#print("Payment reached receiver after", num_attempts, "attempts.")
 					num_reached_receiver += 1
 					break
 			num_sent += num_attempts
@@ -265,7 +261,7 @@ class Simulator:
 		# For each channel in the route, store HTLCs for the current payment
 		if reached_receiver:
 			if payment.desired_result is False:
-				error_type = ErrorType.FAILED_DELIBERATELY
+				erring_node, error_type = d_node, ErrorType.FAILED_DELIBERATELY
 			for u_node, d_node in hops:
 				if (u_node, d_node) in tmp_cid_to_htlcs:
 					chosen_cid, direction, resolution_time, in_flight_htlc = tmp_cid_to_htlcs[(u_node, d_node)]
@@ -304,7 +300,6 @@ class Simulator:
 		'''
 		# calculate the final receiver amount for a hop
 		# which means - subtracting last-hop upfront fee from the given amount
-		assert(len(route) >= 2)
 		receiver, pre_receiver = route[-1], route[-2]
 		direction = (pre_receiver < receiver)
 		chosen_cid, chosen_ch_dir = self.ln_model.lowest_fee_enabled_channel(receiver, pre_receiver, amount, direction)

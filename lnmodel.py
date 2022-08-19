@@ -125,37 +125,38 @@ class LNModel:
 				yield route
 				route = next(routes, None)
 
-	def get_routes_via_hop(self, sender, router_1, router_2, receiver, amount):
+	def get_routes_via_nodes(self, sender, must_route_via_nodes, receiver, amount):
 		# Get a route from sender to (router_1 - router_2 - receiver).
 		# In the jamming context, (router_1 - router_2) is the target hop.
 		# We assume that the (jammer-)receiver is directly connected to router_2.
 		# Although there may be multiple hops from sender to router_1.
+		router_first = must_route_via_nodes[0]
+		router_last = must_route_via_nodes[-1]
 		routing_graph = self.get_routing_graph_for_amount(
 			amount=(1 + self.capacity_filtering_safety_margin) * amount)
-		if not all([n in routing_graph for n in [sender, router_1, router_2, receiver]]):
+		if not all([n in routing_graph for n in [sender, receiver] + must_route_via_nodes]):
 			#print("No route")
 			#print("Not in routing graph:", [n for n in [sender, router_1, router_2, receiver] if n not in routing_graph])
 			yield from ()
-		elif not nx.has_path(routing_graph, sender, router_1):
+		elif not nx.has_path(routing_graph, sender, router_first):
 			#print("No path from sender", sender, "to router_1", router)
 			yield from ()
-		elif router_1 not in routing_graph.predecessors(router_2):
-			#print("No (big enough) channel from", router_1, "to", router_2)
-			yield from ()
-		elif router_2 not in routing_graph.predecessors(receiver):
+		elif router_last not in routing_graph.predecessors(receiver):
 			#print("No (big enough) channel from", router_2, "to", receiver)
+			#print("Note: last router and receiver must be directly connected!")
 			yield from ()
 		else:
-			routes_to_router = nx.all_shortest_paths(routing_graph, sender, router_1)
+			routes_to_router = nx.all_shortest_paths(routing_graph, sender, router_first)
 			route = next(routes_to_router, None)
 			while route is not None:
-				route.append(router_2)
+				route.extend(must_route_via_nodes[1:])
 				route.append(receiver)
 				yield route
 				route = next(routes_to_router, None)
 
 	def lowest_fee_enabled_channel(self, u_node, d_node, amount, direction):
 		channels_dict = self.channel_graph.get_edge_data(u_node, d_node)
+		assert(channels_dict is not None), (u_node, d_node)
 
 		def filter_dirs_in_hop(channels_dict, amount, direction, is_suitable):
 			# Return only ch_dirs from a hop that are suitable as per is_suitable function.
@@ -211,8 +212,8 @@ class LNModel:
 	def set_fee_function(self, node_1, node_2, revenue_type, base, rate):
 		# Set a fee function of form f(a) = b + ra to the channel between node_1 and node_2.
 		# Note: we assume there is at most one channel between the nodes!
-		if node_1 not in self.channel_graph.neighbors(node_2):
-			#print("Can't set fee: no channel between", node_1, node_2)
+		if node_1 not in self.routing_graph.predecessors(node_2):
+			print("Can't set fee: no channel between", node_1, node_2)
 			pass
 		else:
 			ch_dir = self.get_only_ch_dir(node_1, node_2)
@@ -226,7 +227,9 @@ class LNModel:
 				pass
 
 	def set_fee_function_for_all(self, revenue_type, base, rate):
-		for (node_1, node_2) in self.channel_graph.edges():
+		for (node_1, node_2) in self.routing_graph.edges():
+			#print("Setting fee", revenue_type.value, "for", node_1, node_2)
+			#print("Setting fee", revenue_type.value, "for", node_1, node_2)
 			self.set_fee_function(node_1, node_2, revenue_type, base, rate)
 
 	def set_num_slots(self, node_1, node_2, num_slots):
@@ -268,7 +271,7 @@ class LNModel:
 
 	def reset_in_flight_htlcs(self):
 		#print("Resetting in-flight HTLCs")
-		for node_1, node_2 in self.channel_graph.edges():
+		for node_1, node_2 in self.routing_graph.edges():
 			ch_dict = self.channel_graph.get_edge_data(node_1, node_2)
 			direction = (node_1 < node_2)
 			for cid in ch_dict:

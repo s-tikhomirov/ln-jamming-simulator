@@ -13,14 +13,15 @@ import csv
 DEFAULT_UPFRONT_BASE_COEFF_RANGE = [0, 0.001, 0.002, 0.005, 0.01]
 DEFAULT_UPFRONT_RATE_COEFF_RANGE = [0, 0.1, 0.2, 0.5, 1]
 
-EXPERIMENT_SNAPSHOT_FILENAME = "./snapshots/listchannels_abcd.json"
+ABCD_SNAPSHOT_FILENAME = "./snapshots/listchannels_abcd.json"
+WHEEL_SNAPSHOT_FILENAME = "./snapshots/listchannels_wheel.json"
 
 
 def main():
 	parser = argparse.ArgumentParser()
 	parser.add_argument(
-		"--snapshot",
-		default=EXPERIMENT_SNAPSHOT_FILENAME,
+		"--scenario",
+		default="abcd",
 		type=str,
 		help="LN graph JSON filename."
 	)
@@ -101,15 +102,6 @@ def main():
 		print("Initializing randomness seed:", args.seed)
 		seed(args.seed)
 
-	with open(EXPERIMENT_SNAPSHOT_FILENAME, 'r') as snapshot_file:
-		snapshot_json = json.load(snapshot_file)
-
-	ln_model = LNModel(snapshot_json, args.default_num_slots)
-	ln_model.set_fee_function_for_all(
-		RevenueType.SUCCESS,
-		args.success_base_fee,
-		args.success_fee_rate)
-
 	simulator = Simulator(
 		max_num_attempts_per_route_honest=args.max_num_attempts_honest,
 		max_num_attempts_per_route_jamming=args.max_num_attempts_jamming,
@@ -117,37 +109,94 @@ def main():
 		enforce_dust_limit=True,
 		keep_receiver_upfront_fee=args.keep_receiver_upfront_fee)
 
-	experiment = Experiment(
-		ln_model,
-		simulator,
-		args.num_runs_per_simulation,
-		args.success_base_fee,
-		args.success_fee_rate)
+	def run_linear_experiments():
+		with open(ABCD_SNAPSHOT_FILENAME, 'r') as snapshot_file:
+			snapshot_json = json.load(snapshot_file)
 
-	def schedule_generation_funciton_honest():
-		return generate_honest_schedule(
-			senders_list=["Alice"],
-			receivers_list=["Dave"],
-			duration=args.simulation_duration)
+		ln_model = LNModel(snapshot_json, args.default_num_slots)
+		ln_model.set_fee_function_for_all(
+			RevenueType.SUCCESS,
+			args.success_base_fee,
+			args.success_fee_rate)
 
-	def schedule_generation_funciton_jamming():
-		return generate_jamming_schedule(
-			sender="Alice",
-			receiver="Dave",
-			duration=args.simulation_duration)
+		experiment = Experiment(
+			ln_model,
+			simulator,
+			args.num_runs_per_simulation,
+			args.success_base_fee,
+			args.success_fee_rate)
+
+		def schedule_generation_funciton_honest():
+			return generate_honest_schedule(
+				senders_list=["Alice"],
+				receivers_list=["Dave"],
+				duration=args.simulation_duration)
+
+		def schedule_generation_funciton_jamming():
+			return generate_jamming_schedule(
+				sender="Alice",
+				receiver="Dave",
+				duration=args.simulation_duration,
+				must_route_via=["Bob", "Charlie"])
+
+		results_honest, results_jamming = experiment.run_pair_of_simulations(
+			schedule_generation_funciton_honest,
+			schedule_generation_funciton_jamming,
+			args.upfront_base_coeff_range,
+			args.upfront_rate_coeff_range,
+			attackers_nodes=("Alice", "Dave"))
+
+		return results_honest, results_jamming
+
+	def run_wheel_experiments():
+		with open(WHEEL_SNAPSHOT_FILENAME, 'r') as snapshot_file:
+			snapshot_json = json.load(snapshot_file)
+
+		ln_model = LNModel(snapshot_json, args.default_num_slots)
+		ln_model.set_fee_function_for_all(
+			RevenueType.SUCCESS,
+			args.success_base_fee,
+			args.success_fee_rate)
+
+		experiment = Experiment(
+			ln_model,
+			simulator,
+			args.num_runs_per_simulation,
+			args.success_base_fee,
+			args.success_fee_rate)
+
+		def schedule_generation_funciton_honest():
+			return generate_honest_schedule(
+				senders_list=("Alice", "Bob", "Charlie", "Dave"),
+				receivers_list=("Alice", "Bob", "Charlie", "Dave"),
+				duration=args.simulation_duration,
+				must_route_via=["Hub"])
+
+		def schedule_generation_funciton_jamming():
+			return generate_jamming_schedule(
+				sender="JammerSender",
+				receiver="JammerReceiver",
+				duration=args.simulation_duration,
+				must_route_via=["Alice", "Hub", "Bob", "Charlie", "Hub", "Dave"])
+
+		results_honest, results_jamming = experiment.run_pair_of_simulations(
+			schedule_generation_funciton_honest,
+			schedule_generation_funciton_jamming,
+			args.upfront_base_coeff_range,
+			args.upfront_rate_coeff_range,
+			attackers_nodes=("JammerSender", "JammerReceiver"))
+		return results_honest, results_jamming
 
 	start_timestamp = int(time())
-	results_honest, results_jamming = experiment.run_pair_of_simulations(
-		schedule_generation_funciton_honest,
-		schedule_generation_funciton_jamming,
-		args.upfront_base_coeff_range,
-		args.upfront_rate_coeff_range,
-		attackers_nodes=("Alice", "Dave"),
-		target_node_pair=("Bob", "Charlie"))
+	if args.scenario == "abcd":
+		results_honest, results_jamming = run_linear_experiments()
+	elif args.scenario == "wheel":
+		results_honest, results_jamming = run_wheel_experiments()
 	end_timestamp = int(time())
 
 	results = {
 		"params": {
+			"scenario": args.scenario,
 			"simulation_duration": args.simulation_duration,
 			"num_runs_per_simulation": args.num_runs_per_simulation,
 			"success_base_fee": args.success_base_fee,

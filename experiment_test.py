@@ -90,7 +90,6 @@ def example_simulator():
 		keep_receiver_upfront_fee=True,
 		max_num_attempts_per_route_honest=10,
 		max_num_attempts_per_route_jamming=100)
-	simulator.target_node_pair = ("Bob", "Charlie")
 	return simulator
 
 
@@ -134,7 +133,8 @@ def schedule_generation_funciton_jamming(simulation_duration):
 	return partial(lambda: generate_jamming_schedule(
 		sender="Alice",
 		receiver="Dave",
-		duration=simulation_duration))
+		duration=simulation_duration,
+		must_route_via=["Bob", "Charlie"]))
 
 
 def test_experiment_no_balance_failures(
@@ -148,8 +148,7 @@ def test_experiment_no_balance_failures(
 		schedule_generation_funciton_jamming,
 		upfront_base_coeff_range=[0, 0.01],
 		upfront_rate_coeff_range=[0, 0.1],
-		attackers_nodes=("Alice", "Dave"),
-		target_node_pair=("Bob", "Charlie"))
+		attackers_nodes=("Alice", "Dave"))
 	results = {
 		"simulations": {
 			"honest": results_honest,
@@ -171,8 +170,7 @@ def test_experiment_balance_failures_multiple_jamming_attempts(
 		schedule_generation_funciton_jamming,
 		upfront_base_coeff_range=[0, 0.01],
 		upfront_rate_coeff_range=[0, 0.1],
-		attackers_nodes=("Alice", "Dave"),
-		target_node_pair=("Bob", "Charlie"))
+		attackers_nodes=("Alice", "Dave"))
 	results = {
 		"simulations": {
 			"honest": results_honest,
