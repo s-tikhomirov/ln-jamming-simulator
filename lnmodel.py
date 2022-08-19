@@ -73,6 +73,13 @@ class LNModel:
 	'''
 
 	def __init__(self, snapshot_json, default_num_slots):
+		'''
+			- snapshot_json
+				A JSON object describing the LN graph (CLN's listchannels).
+
+			- default_num_slots
+				Default number of slots in the graph.
+		'''
 		self.default_num_slots = default_num_slots
 		self.channel_graph = get_channel_graph_from_json(snapshot_json, self.default_num_slots)
 		self.routing_graph = get_routing_graph_from_json(snapshot_json)
@@ -181,23 +188,6 @@ class LNModel:
 		return amount / channels_dict[cid]["capacity"]
 
 	def create_payment(self, route, amount, processing_delay, desired_result, enforce_dust_limit):
-		'''
-			Create a Payment.
-
-			- route
-				A list of nodes for the payment to go through.
-
-			- amount
-				The amount for the receiver to receive.
-
-			- processing_delay
-				How much delay an HTLC created within this payment incurs, if not immediately failed.
-				This delay is the same on all hops.
-
-			- desired_result
-				Distinguishes honest payments (True) from jams (False).
-		'''
-		#print("Creating a payment for route", route, "and amount", amount)
 		p, u_nodes, d_nodes = None, route[:-1], route[1:]
 		for u_node, d_node in reversed(list(zip(u_nodes, d_nodes))):
 			#print("Wrapping payment w.r.t. fee policy of", u_node, d_node)
@@ -206,13 +196,13 @@ class LNModel:
 			#print(chosen_ch_dir)
 			is_last_hop = p is None
 			p = Payment(
-				p,
-				d_node,
-				chosen_ch_dir.upfront_fee_function,
-				chosen_ch_dir.success_fee_function,
-				desired_result if is_last_hop else None,
-				processing_delay if is_last_hop else None,
-				amount if is_last_hop else None)
+				downstream_payment=p,
+				downstream_node=d_node,
+				upfront_fee_function=chosen_ch_dir.upfront_fee_function,
+				success_fee_function=chosen_ch_dir.success_fee_function,
+				desired_result=desired_result if is_last_hop else None,
+				processing_delay=processing_delay if is_last_hop else None,
+				receiver_amount=amount if is_last_hop else None)
 			if enforce_dust_limit:
 				assert(p.amount >= ProtocolParams["DUST_LIMIT"]), (p.amount, ProtocolParams["DUST_LIMIT"])
 		#print("Constructed payment:", p)

@@ -33,8 +33,8 @@ class ChannelDirection:
 			- is_enabled
 				True if this ch_dir forwards payments, False if not.
 
-			- slots
-				A PriorityQueue of in-flight HTLCs.
+			- num_slots
+				The max size of a PriorityQueue of in-flight HTLCs.
 				The queue priority metric is HTLC resolution time.
 
 			- upfront_fee_function
@@ -53,7 +53,7 @@ class ChannelDirection:
 		self.is_enabled = is_enabled
 		self.upfront_fee_function = upfront_fee_function
 		self.success_fee_function = success_fee_function
-		# we remember num_slots in a separate variable because
+		# we remember num_slots in a separate variable:
 		# there is no way to get maxsize from a queue after it's created
 		self.num_slots = num_slots
 		self.slots = PriorityQueue(maxsize=num_slots)

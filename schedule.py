@@ -12,7 +12,7 @@ from params import (
 
 class Event:
 	'''
-		An event is a planned Payment that is stored in a Schedule.
+		A planned payment stored in a Schedule.
 	'''
 
 	def __init__(self, sender, receiver, amount, processing_delay, desired_result):
@@ -28,13 +28,13 @@ class Event:
 				(Whether or not to exclude last-hop upfront fee is decided on Payment construction.)
 
 			- processing delay
-				How much would it take an HTLC to resolve,
-				_if_ the corresponding payment reaches the receiver.
-				(Otherwise, no HTLC is stored, hence the processing delay is zero.)
+				How much would it take an HTLC to resolve, IF the corresponding payment reaches the receiver.
+				Otherwise, no HTLC is stored, and the delay is zero.
 
 			- desired_result
 				True for honest payments, False for jams.
 		'''
+		# ID is useful for seamless ordering inside the priority queue
 		self.id = "".join(choice(hexdigits) for i in range(6))
 		self.sender = sender
 		self.receiver = receiver

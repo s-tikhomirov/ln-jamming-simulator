@@ -111,10 +111,11 @@ def main():
 		args.success_fee_rate)
 
 	simulator = Simulator(
-		args.no_balance_failures,
-		args.keep_receiver_upfront_fee,
-		args.max_num_attempts_honest,
-		args.max_num_attempts_jamming)
+		max_num_attempts_per_route_honest=args.max_num_attempts_honest,
+		max_num_attempts_per_route_jamming=args.max_num_attempts_jamming,
+		no_balance_failures=args.no_balance_failures,
+		enforce_dust_limit=True,
+		keep_receiver_upfront_fee=args.keep_receiver_upfront_fee)
 
 	experiment = Experiment(
 		ln_model,
@@ -123,37 +124,26 @@ def main():
 		args.success_base_fee,
 		args.success_fee_rate)
 
-	experiment.set_sender("Alice")
-	experiment.set_receiver("Dave")
-	experiment.set_target_node_pair("Bob", "Charlie")
-
-	start_timestamp = int(time())
-
-	# give attacker's channels twice as many slots as the default number of slots
-	# we don't have to reset the queues back to ???
-	# TODO: in graph simulations, exclude attacker's channels from honest payment flow
-	for special_node in ("Alice", "Dave"):
-		for neighbor in ln_model.channel_graph.neighbors(special_node):
-			ln_model.set_num_slots(special_node, neighbor, 2 * args.default_num_slots)
-
-	simulation_series_results_honest = experiment.run_simulations(
-		ln_model,
-		lambda: generate_honest_schedule(
+	def schedule_generation_funciton_honest():
+		return generate_honest_schedule(
 			senders_list=["Alice"],
 			receivers_list=["Dave"],
-			duration=args.simulation_duration),
-		args.upfront_base_coeff_range,
-		args.upfront_rate_coeff_range)
+			duration=args.simulation_duration)
 
-	simulator.target_node_pair = (("Bob", "Charlie"))
-	simulation_series_results_jamming = experiment.run_simulations(
-		ln_model,
-		lambda: generate_jamming_schedule(
+	def schedule_generation_funciton_jamming():
+		return generate_jamming_schedule(
 			sender="Alice",
 			receiver="Dave",
-			duration=args.simulation_duration),
+			duration=args.simulation_duration)
+
+	start_timestamp = int(time())
+	results_honest, results_jamming = experiment.run_pair_of_simulations(
+		schedule_generation_funciton_honest,
+		schedule_generation_funciton_jamming,
 		args.upfront_base_coeff_range,
-		args.upfront_rate_coeff_range)
+		args.upfront_rate_coeff_range,
+		attackers_nodes=("Alice", "Dave"),
+		target_node_pair=("Bob", "Charlie"))
 	end_timestamp = int(time())
 
 	results = {
@@ -175,11 +165,11 @@ def main():
 		},
 		"simulations": {
 			"honest": sorted(
-				simulation_series_results_honest,
+				results_honest,
 				key=lambda d: (d["upfront_base_coeff"], d["upfront_rate_coeff"]),
 				reverse=False),
 			"jamming": sorted(
-				simulation_series_results_jamming,
+				results_jamming,
 				key=lambda d: (d["upfront_base_coeff"], d["upfront_rate_coeff"]),
 				reverse=False)
 		}

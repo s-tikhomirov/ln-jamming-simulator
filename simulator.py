@@ -1,7 +1,5 @@
-from payment import Payment
 from lnmodel import RevenueType
 from channel import dir0, dir1, ErrorType
-from params import ProtocolParams
 
 from random import random
 
@@ -57,14 +55,20 @@ class Simulator:
 
 	def __init__(
 		self,
+		max_num_attempts_per_route_honest,
+		max_num_attempts_per_route_jamming,
 		no_balance_failures=False,
 		enforce_dust_limit=True,
 		subtract_last_hop_upfront_fee_for_honest_payments=True,
 		keep_receiver_upfront_fee=False,
-		max_num_attempts_per_route_honest=1,
-		max_num_attempts_per_route_jamming=1,
 		target_node_pair=None):
 		'''
+			- max_num_attempts_per_route_honest
+				The maximum number of attempts to send an honest payment.
+
+			- max_num_attempts_per_route_jamming
+				The maximul number of attempts to send a jam (which is probably higher than that for honest payments).
+
 			- no_balance_failures
 				If True, channels don't fail because of low balance.
 				If False, channels fails. Probability depends on amount and capacity.
@@ -82,11 +86,8 @@ class Simulator:
 				Hence, technically this is not a revenue.
 				However, it may be useful to leave it to check for inveriants in tests (sum of all fees == 0).
 
-			- max_num_attempts_per_route_honest
-				The maximum number of attempts to send an honest payment.
-
-			- max_num_attempts_per_route_jamming
-				The maximul number of attempts to send a jam (which is probably higher than that for honest payments).
+			- target_node_pair
+				If set, all routes will go through these nodes (in this order).
 		'''
 		self.enforce_dust_limit = enforce_dust_limit
 		self.no_balance_failures = no_balance_failures
@@ -97,21 +98,6 @@ class Simulator:
 		self.target_node_pair = target_node_pair
 
 	def execute_schedule(self, schedule, ln_model):
-		'''
-			- ln_model
-				The LN graph to run the simulation against.
-
-			- schedule
-				A Schedule to execute.
-
-			- simulation_cutoff
-				When to end the simulation.
-				Simulation end is different from the timestamp of the last event (which is earlier).
-				It determines which HTLCs to finalize after all Events are processed.
-
-			- target_node_pair
-				Build routes such that they pass through this pair of nodes, in this order (used in jamming).
-		'''
 		self.ln_model = ln_model
 		now, num_sent, num_failed, num_reached_receiver = -1, 0, 0, 0
 		# we make the first attempt unconditionally
@@ -168,29 +154,30 @@ class Simulator:
 			num_sent += num_attempts
 			if is_jam:
 				if reached_receiver:
-					print("Jam reached receiver")
+					#print("Jam reached receiver")
 					#print("Putting this jam into schedule again:", now, event)
 					schedule.put_event(now, event)
 				else:
-					print("Jam failed at", erring_node, error_type)
+					#print("Jam failed at", erring_node, error_type)
 					next_batch_time = now + event.processing_delay
 					if error_type in (ErrorType.LOW_BALANCE, ErrorType.FAILED_DELIBERATELY):
 						if num_jam_attempts_this_batch < self.max_num_attempts_per_route_jamming:
 							# we didn't jam because of error, continue this batch
+							#print("Continue batch")
 							schedule.put_event(now, event)
 							num_jam_attempts_this_batch += 1
 						else:
 							# we've tried many times, haven't fully jammed, moving on to the next batch
-							#print("Coundn't fully jam target at time", now)
+							#print("Coundn't fully jam target at time", now, "after", num_jam_attempts_this_batch, "attempts")
 							schedule.put_event(next_batch_time, event)
 							num_jam_attempts_this_batch = 1
 					elif error_type == ErrorType.NO_SLOTS:
 						sender, pre_receiver = route[0], route[-2]
 						if erring_node in (sender, pre_receiver):
-							print("WARNING: Jammer's slots depleted. Allocate more slots to jammer's channels!")
+							#print("WARNING: Jammer's slots depleted. Allocate more slots to jammer's channels!")
 							pass
 						else:
-							print("Fully jammed at time", now, ". Waiting until the next batch.")
+							#print("Fully jammed at time", now, ". Waiting until the next batch.")
 							pass
 						num_jam_attempts_this_batch = 1
 						schedule.put_event(next_batch_time, event)
@@ -209,7 +196,6 @@ class Simulator:
 			Try sending a payment.
 			The route is encoded within the payment,
 			apart from the sender, which is provided as a separate argument.
-			Make just one attempt; re-tries are implemented at the caller.
 		'''
 		#print("SENDING PAYMENT", payment.id)
 		erring_node, error_type, reached_receiver = None, None, False

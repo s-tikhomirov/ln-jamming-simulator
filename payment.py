@@ -21,25 +21,28 @@ class Payment:
 		'''
 			Attributes:
 
-				downstream_payment
+				- downstream_payment
 					A Payment to be forwarded to the next node in the route.
 
-				upfront_fee_function
+				- downstream_node
+					A node to forward the payment to.
+
+				- upfront_fee_function
 					A function to calculate the upfront fee from payment _amount_.
 					(Amount = body + success-case fee.)
 
-				success_fee_function
+				- success_fee_function
 					A function to calculate the success-case fee from the payment _body_.
 
-				desired_result
+				- desired_result
 					True for honest payments, False for jams.
 
-				processing_delay
+				- processing_delay
 					How much a payment takes to process.
 					A payment incurs the same processing delay on all hops in the route.
 					Delay is incurred if (and only if) the payment reaches the receiver.
 
-				receiver_amount
+				- receiver_amount
 					How much the receiver will get if the payment succeeds.
 
 		'''

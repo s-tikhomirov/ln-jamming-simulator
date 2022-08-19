@@ -21,6 +21,8 @@ def example_ln_model():
 @pytest.fixture
 def example_simulator():
 	sim = Simulator(
+		max_num_attempts_per_route_honest=1,
+		max_num_attempts_per_route_jamming=1,
 		no_balance_failures=True,
 		keep_receiver_upfront_fee=True,
 		subtract_last_hop_upfront_fee_for_honest_payments=False,
@@ -150,7 +152,7 @@ def test_simulator_with_random_schedule(example_ln_model, example_simulator):
 	num_sent, num_failed, num_reached_receiver = sim.execute_schedule(sch, example_ln_model)
 	assert(num_sent > 0)
 	assert_final_revenue_correctness(sim, num_sent)
-	example_ln_model.report_revenues()
+	#example_ln_model.report_revenues()
 
 
 def test_simulator_jamming(example_ln_model, example_simulator):
