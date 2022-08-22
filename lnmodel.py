@@ -206,7 +206,6 @@ class LNModel:
 				receiver_amount=amount if is_last_hop else None)
 			if enforce_dust_limit:
 				assert(p.amount >= ProtocolParams["DUST_LIMIT"]), (p.amount, ProtocolParams["DUST_LIMIT"])
-		#print("Constructed payment:", p)
 		return p
 
 	def set_fee_function(self, node_1, node_2, revenue_type, base, rate):

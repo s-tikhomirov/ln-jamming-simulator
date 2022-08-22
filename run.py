@@ -21,8 +21,8 @@ def main():
 	parser = argparse.ArgumentParser()
 	parser.add_argument(
 		"--scenario",
-		default="abcd",
 		type=str,
+		choices={"abcd", "wheel"},
 		help="LN graph JSON filename."
 	)
 	parser.add_argument(

@@ -2,7 +2,7 @@
    "channels": [
       {
          "source": "Alice",
-         "destination": "Bob",
+         "destination": "Mary",
          "short_channel_id": "ABx0",
          "satoshis": 1000000,
          "active": true,
@@ -12,7 +12,7 @@
          "fee_per_millionth_upfront": 50000
       },
       {
-         "source": "Bob",
+         "source": "Mary",
          "destination": "Charlie",
          "short_channel_id": "BCx0",
          "satoshis": 1000000,

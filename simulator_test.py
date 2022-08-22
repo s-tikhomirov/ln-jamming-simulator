@@ -9,6 +9,9 @@ from channel import ErrorType
 from params import honest_amount_function, honest_proccesing_delay_function, honest_generation_delay_function
 
 TEST_SNAPSHOT_FILENAME = "./snapshots/listchannels_test.json"
+# Initially, the only test route was Alice - Bob - Charlie - Dave.
+# We renamed Bob to Mary to test that everything works if route is not alphabetically ordered.
+# (We kept b_ variable names though.)
 
 
 @pytest.fixture
@@ -44,8 +47,8 @@ def test_simulator_one_successful_payment(example_ln_model, example_simulator):
 	# Now we make specific tests; Dave's revenues are zero by construction (tested above)
 	a_rev_upfront = sim.ln_model.get_revenue("Alice", RevenueType.UPFRONT)
 	a_rev_success = sim.ln_model.get_revenue("Alice", RevenueType.SUCCESS)
-	b_rev_upfront = sim.ln_model.get_revenue("Bob", RevenueType.UPFRONT)
-	b_rev_success = sim.ln_model.get_revenue("Bob", RevenueType.SUCCESS)
+	b_rev_upfront = sim.ln_model.get_revenue("Mary", RevenueType.UPFRONT)
+	b_rev_success = sim.ln_model.get_revenue("Mary", RevenueType.SUCCESS)
 	c_rev_upfront = sim.ln_model.get_revenue("Charlie", RevenueType.UPFRONT)
 	c_rev_success = sim.ln_model.get_revenue("Charlie", RevenueType.SUCCESS)
 	d_rev_upfront = sim.ln_model.get_revenue("Dave", RevenueType.UPFRONT)
@@ -84,8 +87,8 @@ def test_simulator_one_jam_batch(example_ln_model, example_simulator):
 	# Now we make specific tests; Dave's revenues are zero by construction (tested above)
 	a_rev_upfront = sim.ln_model.get_revenue("Alice", RevenueType.UPFRONT)
 	a_rev_success = sim.ln_model.get_revenue("Alice", RevenueType.SUCCESS)
-	b_rev_upfront = sim.ln_model.get_revenue("Bob", RevenueType.UPFRONT)
-	b_rev_success = sim.ln_model.get_revenue("Bob", RevenueType.SUCCESS)
+	b_rev_upfront = sim.ln_model.get_revenue("Mary", RevenueType.UPFRONT)
+	b_rev_success = sim.ln_model.get_revenue("Mary", RevenueType.SUCCESS)
 	c_rev_upfront = sim.ln_model.get_revenue("Charlie", RevenueType.UPFRONT)
 	c_rev_success = sim.ln_model.get_revenue("Charlie", RevenueType.SUCCESS)
 	d_rev_upfront = sim.ln_model.get_revenue("Dave", RevenueType.UPFRONT)
@@ -118,8 +121,8 @@ def test_simulator_end_htlc_resolution(example_ln_model, example_simulator):
 	# Now we make specific tests; Dave's revenues are zero by construction (tested above)
 	a_rev_upfront = sim.ln_model.get_revenue("Alice", RevenueType.UPFRONT)
 	a_rev_success = sim.ln_model.get_revenue("Alice", RevenueType.SUCCESS)
-	b_rev_upfront = sim.ln_model.get_revenue("Bob", RevenueType.UPFRONT)
-	b_rev_success = sim.ln_model.get_revenue("Bob", RevenueType.SUCCESS)
+	b_rev_upfront = sim.ln_model.get_revenue("Mary", RevenueType.UPFRONT)
+	b_rev_success = sim.ln_model.get_revenue("Mary", RevenueType.SUCCESS)
 	c_rev_upfront = sim.ln_model.get_revenue("Charlie", RevenueType.UPFRONT)
 	c_rev_success = sim.ln_model.get_revenue("Charlie", RevenueType.SUCCESS)
 	d_rev_upfront = sim.ln_model.get_revenue("Dave", RevenueType.UPFRONT)
@@ -157,18 +160,18 @@ def test_simulator_with_random_schedule(example_ln_model, example_simulator):
 
 def test_simulator_jamming(example_ln_model, example_simulator):
 	sim = example_simulator
-	example_ln_model.set_num_slots("Alice", "Bob", 100)
+	example_ln_model.set_num_slots("Alice", "Mary", 100)
 	example_ln_model.set_num_slots("Charlie", "Dave", 100)
 	duration = 10
 	sch = Schedule(duration)
 	jam_processing_delay = 4
 	sch.put_event(0, Event("Alice", "Dave", 100, jam_processing_delay, False))
-	sim.target_node_pair = (("Bob", "Charlie"))
+	sim.target_node_pair = (("Mary", "Charlie"))
 	num_sent, num_failed, num_reached_receiver = sim.execute_schedule(sch, example_ln_model)
 	a_rev_upfront = sim.ln_model.get_revenue("Alice", RevenueType.UPFRONT)
 	a_rev_success = sim.ln_model.get_revenue("Alice", RevenueType.SUCCESS)
-	b_rev_upfront = sim.ln_model.get_revenue("Bob", RevenueType.UPFRONT)
-	b_rev_success = sim.ln_model.get_revenue("Bob", RevenueType.SUCCESS)
+	b_rev_upfront = sim.ln_model.get_revenue("Mary", RevenueType.UPFRONT)
+	b_rev_success = sim.ln_model.get_revenue("Mary", RevenueType.SUCCESS)
 	c_rev_upfront = sim.ln_model.get_revenue("Charlie", RevenueType.UPFRONT)
 	c_rev_success = sim.ln_model.get_revenue("Charlie", RevenueType.SUCCESS)
 	d_rev_upfront = sim.ln_model.get_revenue("Dave", RevenueType.UPFRONT)
@@ -195,8 +198,8 @@ def test_simulator_jamming(example_ln_model, example_simulator):
 def assert_final_revenue_correctness(sim, num_sent):
 	a_rev_upfront = sim.ln_model.get_revenue("Alice", RevenueType.UPFRONT)
 	a_rev_success = sim.ln_model.get_revenue("Alice", RevenueType.SUCCESS)
-	b_rev_upfront = sim.ln_model.get_revenue("Bob", RevenueType.UPFRONT)
-	b_rev_success = sim.ln_model.get_revenue("Bob", RevenueType.SUCCESS)
+	b_rev_upfront = sim.ln_model.get_revenue("Mary", RevenueType.UPFRONT)
+	b_rev_success = sim.ln_model.get_revenue("Mary", RevenueType.SUCCESS)
 	c_rev_upfront = sim.ln_model.get_revenue("Charlie", RevenueType.UPFRONT)
 	c_rev_success = sim.ln_model.get_revenue("Charlie", RevenueType.SUCCESS)
 	d_rev_upfront = sim.ln_model.get_revenue("Dave", RevenueType.UPFRONT)
@@ -209,7 +212,7 @@ def assert_final_revenue_correctness(sim, num_sent):
 	assert(a_rev_success <= 0)
 	assert(a_rev_upfront + a_rev_success < 0 or num_sent == 0)
 
-	# Bob and Charlie are routing nodes; their revenues are non-negative
+	# Mary and Charlie are routing nodes; their revenues are non-negative
 	assert(b_rev_upfront >= 0)
 	assert(c_rev_upfront >= 0)
 	assert(b_rev_success >= 0)
@@ -236,7 +239,7 @@ def test_body_for_amount_function():
 
 def test_error_response_honest(example_ln_model, example_simulator):
 	# an honest payment gets retried multiple times but still fails
-	example_ln_model.set_deliberate_failure_behavior("Bob", "Charlie", 1)
+	example_ln_model.set_deliberate_failure_behavior("Mary", "Charlie", 1)
 	sim = example_simulator
 	sch = Schedule()
 	event = Event("Alice", "Dave", 100, 1, True)
@@ -251,17 +254,17 @@ def test_error_response_honest(example_ln_model, example_simulator):
 
 def test_error_response_jamming(example_ln_model, example_simulator):
 	example_ln_model.set_deliberate_failure_behavior(
-		"Bob",
+		"Mary",
 		"Charlie",
 		prob=1,
 		spoofing_error_type=ErrorType.LOW_BALANCE)
-	example_ln_model.set_num_slots("Alice", "Bob", 100)
+	example_ln_model.set_num_slots("Alice", "Mary", 100)
 	example_ln_model.set_num_slots("Charlie", "Dave", 100)
 	simulation_duration = 4
 	max_num_attempts_per_route_jamming = 10
 	sch = Schedule(simulation_duration)
 	sim = example_simulator
-	sim.target_node_pair = (("Bob", "Charlie"))
+	sim.target_node_pair = (("Mary", "Charlie"))
 	sim.max_num_attempts_per_route_jamming = max_num_attempts_per_route_jamming
 	jam_processing_delay = 4
 	event = Event("Alice", "Dave", 100, jam_processing_delay, False)

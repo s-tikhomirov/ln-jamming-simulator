@@ -135,8 +135,7 @@ class Simulator:
 				event.processing_delay,
 				event.desired_result,
 				self.enforce_dust_limit)
-			#print("Sender:", event.sender)
-			#print("Constructed payment:", p)
+			#print(event.sender, "sends payment:", p)
 			while num_attempts < (1 if is_jam else self.max_num_attempts_per_route_honest):
 				num_attempts += 1
 				reached_receiver, erring_node, error_type = self.attempt_send_payment(p, event.sender, now)
@@ -277,22 +276,25 @@ class Simulator:
 			Apply all in-flight htlcs with timestamp < now.
 			This is done after the simulation is complete.
 		'''
-		for (node_a, node_b) in self.ln_model.channel_graph.edges():
-			channels_dict = self.ln_model.channel_graph.get_edge_data(node_a, node_b)
+		# Note: we iterate through the edges of the directed routing graph,
+		# but we look up HTLC data in the corresponding undirected channel graph.
+		for (u_node, d_node) in self.ln_model.routing_graph.edges():
+			#print("Resolving HTLCs from", u_node, "to", d_node)
+			channels_dict = self.ln_model.channel_graph.get_edge_data(u_node, d_node)
+			direction = (u_node < d_node)
 			for cid in channels_dict:
-				for direction in [dir0, dir1]:
-					ch_dir = channels_dict[cid]["directions"][direction]
-					if ch_dir is None:
-						continue
-					while not ch_dir.slots.empty():
-						next_htlc_time = ch_dir.slots.queue[0][0]
-						#print("Next HTLC resolution time is:", next_htlc_time)
-						if next_htlc_time > now:
-							#print("No HTLCs to resolve before current time.")
-							break
-						resolution_time, released_htlc = ch_dir.slots.get_nowait()
-						#print(resolution_time, released_htlc)
-						self.apply_htlc(resolution_time, released_htlc, node_a, node_b, now)
+				ch_dir = channels_dict[cid]["directions"][direction]
+				if ch_dir is None:
+					continue
+				while not ch_dir.slots.empty():
+					next_htlc_time = ch_dir.slots.queue[0][0]
+					#print("Next HTLC resolution time is:", next_htlc_time)
+					if next_htlc_time > now:
+						#print("No HTLCs to resolve before current time.")
+						break
+					resolution_time, released_htlc = ch_dir.slots.get_nowait()
+					#print(resolution_time, released_htlc)
+					self.apply_htlc(resolution_time, released_htlc, u_node, d_node, now)
 
 	def get_adjusted_amount(self, amount, route):
 		'''
@@ -313,6 +315,6 @@ class Simulator:
 		'''
 		assert(resolution_time <= now)  # must have been checked before popping
 		if htlc.desired_result is True:
-			#print("Applying", htlc)
+			#print("Applying", htlc, "from", u_node, "to", d_node)
 			self.ln_model.subtract_revenue(u_node, RevenueType.SUCCESS, htlc.success_fee)
 			self.ln_model.add_revenue(d_node, RevenueType.SUCCESS, htlc.success_fee)
