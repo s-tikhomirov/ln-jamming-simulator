@@ -114,7 +114,7 @@ def main():
 			snapshot_json = json.load(snapshot_file)
 
 		ln_model = LNModel(snapshot_json, args.default_num_slots)
-		ln_model.set_fee_function_for_all(
+		ln_model.set_fee_for_all(
 			RevenueType.SUCCESS,
 			args.success_base_fee,
 			args.success_fee_rate)
@@ -122,9 +122,7 @@ def main():
 		experiment = Experiment(
 			ln_model,
 			simulator,
-			args.num_runs_per_simulation,
-			args.success_base_fee,
-			args.success_fee_rate)
+			args.num_runs_per_simulation)
 
 		def schedule_generation_funciton_honest():
 			return generate_honest_schedule(
@@ -153,7 +151,7 @@ def main():
 			snapshot_json = json.load(snapshot_file)
 
 		ln_model = LNModel(snapshot_json, args.default_num_slots)
-		ln_model.set_fee_function_for_all(
+		ln_model.set_fee_for_all(
 			RevenueType.SUCCESS,
 			args.success_base_fee,
 			args.success_fee_rate)
@@ -161,9 +159,7 @@ def main():
 		experiment = Experiment(
 			ln_model,
 			simulator,
-			args.num_runs_per_simulation,
-			args.success_base_fee,
-			args.success_fee_rate)
+			args.num_runs_per_simulation)
 
 		def schedule_generation_funciton_honest():
 			return generate_honest_schedule(

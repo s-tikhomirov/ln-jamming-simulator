@@ -1,5 +1,8 @@
 from queue import PriorityQueue
 from enum import Enum
+from functools import partial
+
+from params import generic_fee_function
 
 # There are two channel directions encoded with a boolean value.
 # Direction "dir0" (True) goes from smaller node ID to larger (alphanumerically).
@@ -16,6 +19,11 @@ class ErrorType(Enum):
 	FAILED_DELIBERATELY = "failed_deliberately"
 
 
+class RevenueType(Enum):
+	UPFRONT = "upfront_revenue"
+	SUCCESS = "success_revenue"
+
+
 class ChannelDirection:
 	'''
 		A ChannelDirection models a Channel's forwarding process in one direction.
@@ -25,8 +33,10 @@ class ChannelDirection:
 		self,
 		is_enabled,
 		num_slots,
-		upfront_fee_function,
-		success_fee_function,
+		upfront_base_fee,
+		upfront_fee_rate,
+		success_base_fee,
+		success_fee_rate,
 		deliberately_fail_prob=0,
 		spoofing_error_type=ErrorType.FAILED_DELIBERATELY):
 		'''
@@ -37,11 +47,17 @@ class ChannelDirection:
 				The max size of a PriorityQueue of in-flight HTLCs.
 				The queue priority metric is HTLC resolution time.
 
-			- upfront_fee_function
-				A function defining the upfront fee for this ch_dir.
+			- upfront_base_fee
+				A base fee for upfront fee function.
 
-			- success_fee_function
-				A function defining the success-case fee for this ch_dir.
+			- upfront_fee_rate
+				A rate for upfront fee function.
+
+			- success_base_fee
+				A base fee for success-case fee function.
+
+			- success_fee_rate
+				A rate for upfront fee function.
 
 			- deliberately_fail_prob
 				The probability with which this ch_dir deliberately fails payments
@@ -51,14 +67,28 @@ class ChannelDirection:
 				The error type to return when deliberately failing a payment.
 		'''
 		self.is_enabled = is_enabled
-		self.upfront_fee_function = upfront_fee_function
-		self.success_fee_function = success_fee_function
+		self.set_fee(RevenueType.UPFRONT, upfront_base_fee, upfront_fee_rate)
+		self.set_fee(RevenueType.SUCCESS, success_base_fee, success_fee_rate)
 		# we remember num_slots in a separate variable:
 		# there is no way to get maxsize from a queue after it's created
 		self.num_slots = num_slots
 		self.slots = PriorityQueue(maxsize=num_slots)
 		self.deliberately_fail_prob = deliberately_fail_prob
 		self.spoofing_error_type = spoofing_error_type
+
+	def set_fee(self, revenue_type, base_fee, fee_rate):
+		fee_function = partial(lambda a: generic_fee_function(base_fee, fee_rate, a))
+		if revenue_type == RevenueType.UPFRONT:
+			self.upfront_base_fee = base_fee
+			self.upfront_fee_rate = fee_rate
+			self.upfront_fee_function = fee_function
+		elif revenue_type == RevenueType.SUCCESS:
+			self.success_base_fee = base_fee
+			self.success_fee_rate = fee_rate
+			self.success_fee_function = fee_function
+		else:
+			#print("Unexpected fee type! Can't set fee.")
+			pass
 
 	def set_num_slots(self, num_slots, copy_existing_htlcs=False):
 		# Initialize slots to a PriorityQueue of a given maxsize.

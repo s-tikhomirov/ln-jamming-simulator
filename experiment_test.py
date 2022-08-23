@@ -44,7 +44,7 @@ def example_ln_model(success_base_fee, success_fee_rate):
 	}
 	snapshot_json = {"channels": [channel_ABx0, channel_BCx0, channel_CDx0]}
 	ln_model = LNModel(snapshot_json, default_num_slots=5)
-	ln_model.set_fee_function_for_all(
+	ln_model.set_fee_for_all(
 		RevenueType.SUCCESS,
 		success_base_fee,
 		success_fee_rate)
@@ -76,7 +76,7 @@ def example_ln_model_small(success_base_fee, success_fee_rate):
 	}
 	snapshot_json = {"channels": [channel_ABx0, channel_BCx0, channel_CDx0]}
 	ln_model = LNModel(snapshot_json, default_num_slots=5)
-	ln_model.set_fee_function_for_all(
+	ln_model.set_fee_for_all(
 		RevenueType.SUCCESS,
 		success_base_fee,
 		success_fee_rate)
@@ -98,9 +98,7 @@ def example_experiment(example_ln_model, example_simulator):
 	experiment = Experiment(
 		example_ln_model,
 		example_simulator,
-		num_runs_per_simulation=1,
-		success_base_fee=1,
-		success_fee_rate=5 / (1000 * 1000))
+		num_runs_per_simulation=1)
 	return experiment
 
 
@@ -109,9 +107,7 @@ def example_experiment_small(example_ln_model_small, example_simulator):
 	experiment = Experiment(
 		example_ln_model_small,
 		example_simulator,
-		num_runs_per_simulation=1,
-		success_base_fee=1,
-		success_fee_rate=5 / (1000 * 1000))
+		num_runs_per_simulation=1)
 	return experiment
 
 

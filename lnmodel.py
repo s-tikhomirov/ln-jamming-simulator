@@ -1,16 +1,9 @@
-from enum import Enum
-from functools import partial
 from queue import PriorityQueue
 import networkx as nx
 
-from channel import ChannelDirection, ErrorType
+from channel import ChannelDirection, ErrorType, RevenueType
 from params import K, M, ProtocolParams
 from payment import Payment
-
-
-class RevenueType(Enum):
-	UPFRONT = "upfront_revenue"
-	SUCCESS = "success_revenue"
 
 
 def get_channel_graph_from_json(snapshot_json, default_num_slots):
@@ -24,15 +17,17 @@ def get_channel_graph_from_json(snapshot_json, default_num_slots):
 		src, dst = cd["source"], cd["destination"]
 		direction = src < dst
 		# Fees may be set manually later in testing snapshots
-		base_fee_success = cd["base_fee_millisatoshi"] / K if "base_fee_millisatoshi" in cd else None
-		fee_rate_success = cd["fee_per_millionth"] / M if "fee_per_millionth" in cd else None
-		base_fee_upfront = cd["base_fee_millisatoshi_upfront"] / K if "base_fee_millisatoshi_upfront" in cd else None
-		fee_rate_upfront = cd["fee_per_millionth_upfront"] / M if "fee_per_millionth_upfront" in cd else None
+		upfront_base_fee = cd["base_fee_millisatoshi_upfront"] / K if "base_fee_millisatoshi_upfront" in cd else None
+		upfront_fee_rate = cd["fee_per_millionth_upfront"] / M if "fee_per_millionth_upfront" in cd else None
+		success_base_fee = cd["base_fee_millisatoshi"] / K if "base_fee_millisatoshi" in cd else None
+		success_fee_rate = cd["fee_per_millionth"] / M if "fee_per_millionth" in cd else None
 		cd = ChannelDirection(
 			is_enabled=cd["active"],
 			num_slots=default_num_slots,
-			upfront_fee_function=partial(lambda b, r, a: b + r * a, base_fee_upfront, fee_rate_upfront),
-			success_fee_function=partial(lambda b, r, a: b + r * a, base_fee_success, fee_rate_success)
+			upfront_base_fee=upfront_base_fee,
+			upfront_fee_rate=upfront_fee_rate,
+			success_base_fee=success_base_fee,
+			success_fee_rate=success_fee_rate
 		)
 		for node in [src, dst]:
 			if node not in g.nodes:
@@ -208,7 +203,7 @@ class LNModel:
 				assert(p.amount >= ProtocolParams["DUST_LIMIT"]), (p.amount, ProtocolParams["DUST_LIMIT"])
 		return p
 
-	def set_fee_function(self, node_1, node_2, revenue_type, base, rate):
+	def set_fee(self, node_1, node_2, revenue_type, base, rate):
 		# Set a fee function of form f(a) = b + ra to the channel between node_1 and node_2.
 		# Note: we assume there is at most one channel between the nodes!
 		if node_1 not in self.routing_graph.predecessors(node_2):
@@ -216,20 +211,21 @@ class LNModel:
 			pass
 		else:
 			ch_dir = self.get_only_ch_dir(node_1, node_2)
-			fee_function = partial(lambda b, r, a: b + r * a, base, rate)
-			if revenue_type == RevenueType.UPFRONT:
-				ch_dir.upfront_fee_function = fee_function
-			elif revenue_type == RevenueType.SUCCESS:
-				ch_dir.success_fee_function = fee_function
-			else:
-				#print("Unexpected fee type! Can't set fee.")
-				pass
+			ch_dir.set_fee(revenue_type, base, rate)
 
-	def set_fee_function_for_all(self, revenue_type, base, rate):
+	def set_fee_for_all(self, revenue_type, base, rate):
 		for (node_1, node_2) in self.routing_graph.edges():
 			#print("Setting fee", revenue_type.value, "for", node_1, node_2)
 			#print("Setting fee", revenue_type.value, "for", node_1, node_2)
-			self.set_fee_function(node_1, node_2, revenue_type, base, rate)
+			self.set_fee(node_1, node_2, revenue_type, base, rate)
+
+	def set_upfront_fee_from_coeff_for_all(self, upfront_base_coeff, upfront_rate_coeff):
+		for (node_1, node_2) in self.routing_graph.edges():
+			ch_dir = self.get_only_ch_dir(node_1, node_2)
+			ch_dir.set_fee(
+				RevenueType.UPFRONT,
+				upfront_base_coeff * ch_dir.success_base_fee,
+				upfront_rate_coeff * ch_dir.success_fee_rate)
 
 	def set_num_slots(self, node_1, node_2, num_slots):
 		# Resize the slots queue to a num_slots.

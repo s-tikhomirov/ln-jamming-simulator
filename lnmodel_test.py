@@ -368,9 +368,9 @@ def test_disabled_channel_direction(example_ln_model, example_amounts):
 	assert(len(routes_list) == 0)
 
 
-def test_set_fee_function(example_ln_model):
+def test_set_fee(example_ln_model):
 	amount = 100
 	ch_dir = example_ln_model.channel_graph.get_edge_data(a, b)["ABx0"]["directions"][a < b]
 	assert(ch_dir.success_fee_function(amount) == 0)
-	example_ln_model.set_fee_function(a, b, RevenueType.SUCCESS, 1, 0.02)
+	example_ln_model.set_fee(a, b, RevenueType.SUCCESS, 1, 0.02)
 	assert(ch_dir.success_fee_function(amount) == 3)

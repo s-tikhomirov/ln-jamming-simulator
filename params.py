@@ -5,6 +5,10 @@ K = 1000
 M = K * K
 
 
+def generic_fee_function(base, rate, amount):
+	return base + rate * amount
+
+
 def honest_amount_function():
 	return lognormal(mean=PaymentFlowParams["AMOUNT_MU"], sigma=PaymentFlowParams["AMOUNT_SIGMA"])
 

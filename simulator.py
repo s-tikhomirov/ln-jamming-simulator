@@ -1,4 +1,4 @@
-from lnmodel import RevenueType
+from channel import RevenueType
 from channel import dir0, dir1, ErrorType
 
 from random import random

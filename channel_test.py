@@ -10,8 +10,10 @@ def example_channel_direction():
 	cd = ChannelDirection(
 		is_enabled=True,
 		num_slots=2,
-		upfront_fee_function=lambda: 0,
-		success_fee_function=lambda: 0)
+		upfront_base_fee=0,
+		upfront_fee_rate=0,
+		success_base_fee=0,
+		success_fee_rate=0)
 	return cd
 
 

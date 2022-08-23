@@ -1,5 +1,4 @@
-from lnmodel import RevenueType
-
+from channel import RevenueType
 
 from statistics import mean
 
@@ -14,9 +13,7 @@ class Experiment:
 		self,
 		ln_model,
 		simulator,
-		num_runs_per_simulation,
-		success_base_fee,
-		success_fee_rate):
+		num_runs_per_simulation):
 		'''
 			- ln_model
 				An LNModel instance to run the experiment against.
@@ -26,22 +23,10 @@ class Experiment:
 
 			- num_runs_per_simulation
 				The number of simulations per parameter combination.
-
-			- success_base_fee
-				The success base fee.
-
-			- success_fee_rate
-				The success fee rate.
 		'''
 		self.ln_model = ln_model
 		self.simulator = simulator
 		self.num_runs_per_simulation = num_runs_per_simulation
-		# Note: strictly speaking, fees are properties of ln_model, not an experiment.
-		# We have to pass them here to calculate upfront fees from success-case fees
-		# (we can't extract the success-case base and rate from functions stored in LNModel).
-		# TODO: replace fee functions in LNModel with (base, rate) pairs.
-		self.success_base_fee = success_base_fee
-		self.success_fee_rate = success_fee_rate
 
 	def run_simulations(self, schedule_generation_funciton, upfront_base_coeff_range, upfront_rate_coeff_range):
 		def run_simulation():
@@ -82,9 +67,7 @@ class Experiment:
 		for upfront_base_coeff in upfront_base_coeff_range:
 			for upfront_rate_coeff in upfront_rate_coeff_range:
 				print("\nStarting simulation with upfront fee coefficients:", upfront_base_coeff, upfront_rate_coeff)
-				upfront_fee_base = self.success_base_fee * upfront_base_coeff
-				upfront_fee_rate = self.success_fee_rate * upfront_rate_coeff
-				self.ln_model.set_fee_function_for_all(RevenueType.UPFRONT, upfront_fee_base, upfront_fee_rate)
+				self.ln_model.set_upfront_fee_from_coeff_for_all(upfront_base_coeff, upfront_rate_coeff)
 				stats, revenues = run_simulation()
 				result = {
 					"upfront_base_coeff": upfront_base_coeff,
