@@ -15,7 +15,7 @@ class Event:
 		A planned payment stored in a Schedule.
 	'''
 
-	def __init__(self, sender, receiver, amount, processing_delay, desired_result, must_route_via=None):
+	def __init__(self, sender, receiver, amount, processing_delay, desired_result, must_route_via=[]):
 		'''
 			- sender
 				The sender of the payment.
@@ -80,7 +80,7 @@ class Schedule:
 		desired_result,
 		payment_processing_delay_function,
 		payment_generation_delay_function,
-		must_route_via=None):
+		must_route_via=[]):
 		'''
 			- senders_list
 				Pick a sender uniformly from this list.
@@ -144,7 +144,7 @@ class Schedule:
 		return s
 
 
-def generate_honest_schedule(senders_list, receivers_list, duration, must_route_via=None):
+def generate_honest_schedule(senders_list, receivers_list, duration, must_route_via=[]):
 	schedule = Schedule(duration=duration)
 	schedule.populate(
 		senders_list=senders_list,

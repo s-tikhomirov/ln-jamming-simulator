@@ -100,54 +100,46 @@ class LNModel:
 			return self.routing_graph[n1][n2][cid]["capacity"] >= amount
 		return nx.subgraph_view(self.routing_graph, lambda _: True, filter_edges)
 
-	def get_routes(self, sender, receiver, amount):
-		# A routes iterator for a given amount from sender to receiver
-		routing_graph = self.get_routing_graph_for_amount(
-			amount=(1 + self.capacity_filtering_safety_margin) * amount)
-		#print("Routing graph has nodes:", list(routing_graph.nodes()))
-		#print("Searching for route from", sender, "to", receiver, "for", amount)
-		if sender not in routing_graph or receiver not in routing_graph:
-			#print("No route - sender or receiver not in routing graph")
-			yield from ()
-		elif not nx.has_path(routing_graph, sender, receiver):
-			#print("No route - no path between sender and receiver")
-			yield from ()
-		else:
-			routes = nx.all_shortest_paths(routing_graph, sender, receiver)
-			route = next(routes, None)
-			while route is not None:
-				#print("Yielding", route)
-				yield route
-				route = next(routes, None)
-
-	def get_routes_via_nodes(self, sender, must_route_via_nodes, receiver, amount):
+	def get_routes(self, sender, receiver, amount, must_route_via_nodes=[]):
 		# Get a route from sender to (router_1 - router_2 - receiver).
 		# In the jamming context, (router_1 - router_2) is the target hop.
 		# We assume that the (jammer-)receiver is directly connected to router_2.
 		# Although there may be multiple hops from sender to router_1.
-		router_first = must_route_via_nodes[0]
-		router_last = must_route_via_nodes[-1]
+		route = None
+		is_route_via = (len(must_route_via_nodes) > 0)
 		routing_graph = self.get_routing_graph_for_amount(
 			amount=(1 + self.capacity_filtering_safety_margin) * amount)
 		if not all([n in routing_graph for n in [sender, receiver] + must_route_via_nodes]):
 			#print("No route")
 			#print("Not in routing graph:", [n for n in [sender, router_1, router_2, receiver] if n not in routing_graph])
 			yield from ()
-		elif not nx.has_path(routing_graph, sender, router_first):
-			#print("No path from sender", sender, "to router_1", router)
-			yield from ()
-		elif router_last not in routing_graph.predecessors(receiver):
-			#print("No (big enough) channel from", router_2, "to", receiver)
-			#print("Note: last router and receiver must be directly connected!")
-			yield from ()
+		if is_route_via:
+			#print("Finding route via", event.must_route_via)
+			router_first = must_route_via_nodes[0]
+			router_last = must_route_via_nodes[-1]
+			if not nx.has_path(routing_graph, sender, router_first):
+				#print("No path from sender", sender, "to router_1", router)
+				yield from ()
+			elif router_last not in routing_graph.predecessors(receiver):
+				#print("No (big enough) channel from", router_2, "to", receiver)
+				#print("Note: last router and receiver must be directly connected!")
+				yield from ()
+			else:
+				routes = nx.all_shortest_paths(routing_graph, sender, router_first)
+				route = next(routes, None)
 		else:
-			routes_to_router = nx.all_shortest_paths(routing_graph, sender, router_first)
-			route = next(routes_to_router, None)
-			while route is not None:
+			if not nx.has_path(routing_graph, sender, receiver):
+				#print("No route - no path between sender and receiver")
+				yield from ()
+			else:
+				routes = nx.all_shortest_paths(routing_graph, sender, receiver)
+				route = next(routes, None)
+		while route is not None:
+			if is_route_via:
 				route.extend(must_route_via_nodes[1:])
 				route.append(receiver)
-				yield route
-				route = next(routes_to_router, None)
+			yield route
+			route = next(routes, None)
 
 	def lowest_fee_enabled_channel(self, u_node, d_node, amount, direction):
 		channels_dict = self.channel_graph.get_edge_data(u_node, d_node)

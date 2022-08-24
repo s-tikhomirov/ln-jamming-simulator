@@ -109,13 +109,7 @@ class Simulator:
 				#print("Reached simulation end time.", now, simulation_cutoff)
 				break
 			#print("Got event:", event)
-			if event.must_route_via is not None:
-				#print("Finding route via", event.must_route_via)
-				routes = self.ln_model.get_routes_via_nodes(event.sender, event.must_route_via, event.receiver, event.amount)
-			else:
-				#print("Finding route via any node")
-				# it's OK to use un-adjusted amount here: we allow for a safety margin for fees
-				routes = self.ln_model.get_routes(event.sender, event.receiver, event.amount)
+			routes = self.ln_model.get_routes(event.sender, event.receiver, event.amount, event.must_route_via)
 			try:
 				route = next(routes)
 				#print("Found route:", route)

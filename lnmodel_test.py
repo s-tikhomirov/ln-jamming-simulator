@@ -342,7 +342,7 @@ def test_get_routes_via_nodes(example_ln_model, example_amounts):
 	# generate all routes from Alice to Dave
 	# through the Bob-Charlie hop specifically
 	# (Craig should not be used)
-	routes = example_ln_model.get_routes_via_nodes(a, [b, c], d, example_amounts["medium"])
+	routes = example_ln_model.get_routes(a, d, example_amounts["medium"], [b, c])
 	routes_list = [p for p in routes]
 	assert(len(routes_list) == 1)
 	assert([a, b, c, d] in routes_list)

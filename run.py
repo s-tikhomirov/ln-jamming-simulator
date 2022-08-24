@@ -84,13 +84,15 @@ def main():
 		nargs="*",
 		type=float,
 		default=DEFAULT_UPFRONT_BASE_COEFF_RANGE,
-		help="A list of values for upfront base fee coefficient.")
+		help="A list of values for upfront base fee coefficient."
+	)
 	parser.add_argument(
 		"--upfront_rate_coeff_range",
 		nargs="*",
 		type=float,
 		default=DEFAULT_UPFRONT_RATE_COEFF_RANGE,
-		help="A list of values for upfront base fee coefficient.")
+		help="A list of values for upfront base fee coefficient."
+	)
 	parser.add_argument(
 		"--seed",
 		type=int,
