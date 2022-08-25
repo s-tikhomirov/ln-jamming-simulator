@@ -160,13 +160,14 @@ def generate_honest_schedule(senders_list, receivers_list, duration, must_route_
 	return schedule
 
 
-def generate_jamming_schedule(sender, receiver, duration, must_route_via):
+def generate_jamming_schedule(duration, must_route_via):
+	# sender and receiver are "JammerSender" and "JammerReceiver"
 	schedule = Schedule(duration=duration)
 	jam_amount = ProtocolParams["DUST_LIMIT"]
 	jam_delay = PaymentFlowParams["JAM_DELAY"]
 	first_jam = Event(
-		sender,
-		receiver,
+		sender="JammerSender",
+		receiver="JammerReceiver",
 		amount=jam_amount,
 		processing_delay=jam_delay,
 		desired_result=False,

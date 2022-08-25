@@ -134,11 +134,33 @@ def main():
 		enforce_dust_limit=True,
 		keep_receiver_upfront_fee=args.keep_receiver_upfront_fee)
 
-	def run_linear_experiments():
-		with open(ABCD_SNAPSHOT_FILENAME, 'r') as snapshot_file:
+	def run_scenario(
+		snapshot_filename,
+		honest_senders,
+		honest_receivers,
+		jammer_sends_to,
+		jammer_receives_from,
+		honest_must_route_via=[],
+		jammer_must_route_via=[]):
+		with open(snapshot_filename, 'r') as snapshot_file:
 			snapshot_json = json.load(snapshot_file)
-
 		ln_model = LNModel(snapshot_json, args.default_num_slots)
+		ln_model.add_jammers_channels(
+			send_to=jammer_sends_to,
+			receive_from=jammer_receives_from)
+
+		def schedule_generation_function_honest():
+			return generate_honest_schedule(
+				senders_list=honest_senders,
+				receivers_list=honest_receivers,
+				duration=args.simulation_duration,
+				must_route_via=honest_must_route_via)
+
+		def schedule_generation_function_jamming():
+			return generate_jamming_schedule(
+				duration=args.simulation_duration,
+				must_route_via=jammer_must_route_via)
+
 		ln_model.set_fee_for_all(
 			FeeType.SUCCESS,
 			args.success_base_fee,
@@ -149,101 +171,61 @@ def main():
 			simulator,
 			args.num_runs_per_simulation)
 
-		def schedule_generation_funciton_honest():
-			return generate_honest_schedule(
-				senders_list=["Alice"],
-				receivers_list=["Dave"],
-				duration=args.simulation_duration)
-
-		def schedule_generation_funciton_jamming():
-			return generate_jamming_schedule(
-				sender="Alice",
-				receiver="Dave",
-				duration=args.simulation_duration,
-				must_route_via=["Bob", "Charlie"])
-
 		results_honest, results_jamming = experiment.run_pair_of_simulations(
-			schedule_generation_funciton_honest,
-			schedule_generation_funciton_jamming,
+			schedule_generation_function_honest,
+			schedule_generation_function_jamming,
 			args.upfront_base_coeff_range,
-			args.upfront_rate_coeff_range,
-			attackers_nodes=("Alice", "Dave"))
+			args.upfront_rate_coeff_range)
 
-		return results_honest, results_jamming
-
-	def run_wheel_experiments():
-		with open(WHEEL_SNAPSHOT_FILENAME, 'r') as snapshot_file:
-			snapshot_json = json.load(snapshot_file)
-
-		ln_model = LNModel(snapshot_json, args.default_num_slots)
-		ln_model.set_fee_for_all(
-			FeeType.SUCCESS,
-			args.success_base_fee,
-			args.success_fee_rate)
-
-		experiment = Experiment(
-			ln_model,
-			simulator,
-			args.num_runs_per_simulation)
-
-		def schedule_generation_funciton_honest():
-			return generate_honest_schedule(
-				senders_list=("Alice", "Bob", "Charlie", "Dave"),
-				receivers_list=("Alice", "Bob", "Charlie", "Dave"),
-				duration=args.simulation_duration,
-				must_route_via=["Hub"])
-
-		def schedule_generation_funciton_jamming():
-			return generate_jamming_schedule(
-				sender="JammerSender",
-				receiver="JammerReceiver",
-				duration=args.simulation_duration,
-				must_route_via=["Alice", "Hub", "Bob", "Charlie", "Hub", "Dave"])
-
-		results_honest, results_jamming = experiment.run_pair_of_simulations(
-			schedule_generation_funciton_honest,
-			schedule_generation_funciton_jamming,
-			args.upfront_base_coeff_range,
-			args.upfront_rate_coeff_range,
-			attackers_nodes=("JammerSender", "JammerReceiver"))
-		return results_honest, results_jamming
+		results = {
+			"params": {
+				"scenario": args.scenario,
+				"simulation_duration": args.simulation_duration,
+				"num_runs_per_simulation": args.num_runs_per_simulation,
+				"success_base_fee": args.success_base_fee,
+				"success_fee_rate": args.success_fee_rate,
+				"no_balance_failures": args.no_balance_failures,
+				"keep_receiver_upfront_fee": args.keep_receiver_upfront_fee,
+				"default_num_slots": args.default_num_slots,
+				"max_num_attempts_per_route_honest": args.max_num_attempts_honest,
+				"max_num_attempts_per_route_jamming": args.max_num_attempts_jamming,
+				"dust_limit": ProtocolParams["DUST_LIMIT"],
+				"honest_payment_every_seconds": PaymentFlowParams["HONEST_PAYMENT_EVERY_SECONDS"],
+				"min_processing_delay": PaymentFlowParams["MIN_DELAY"],
+				"expected_extra_processing_delay": PaymentFlowParams["EXPECTED_EXTRA_DELAY"],
+				"jam_delay": PaymentFlowParams["JAM_DELAY"]
+			},
+			"simulations": {
+				"honest": sorted(
+					results_honest,
+					key=lambda d: (d["upfront_base_coeff"], d["upfront_rate_coeff"]),
+					reverse=False),
+				"jamming": sorted(
+					results_jamming,
+					key=lambda d: (d["upfront_base_coeff"], d["upfront_rate_coeff"]),
+					reverse=False)
+			}
+		}
+		return results
 
 	if args.scenario == "abcd":
-		results_honest, results_jamming = run_linear_experiments()
+		results = run_scenario(
+			snapshot_filename=ABCD_SNAPSHOT_FILENAME,
+			honest_senders=["Alice"],
+			honest_receivers=["Dave"],
+			jammer_sends_to=["Bob"],
+			jammer_receives_from=["Charlie"])
 	elif args.scenario == "wheel":
-		results_honest, results_jamming = run_wheel_experiments()
+		results = run_scenario(
+			snapshot_filename=WHEEL_SNAPSHOT_FILENAME,
+			honest_senders=["Alice", "Bob", "Charlie", "Dave"],
+			honest_receivers=["Alice", "Bob", "Charlie", "Dave"],
+			jammer_sends_to=["Alice"],
+			jammer_receives_from=["Dave"],
+			honest_must_route_via=["Hub"],
+			jammer_must_route_via=["Alice", "Hub", "Bob", "Charlie", "Hub", "Dave"])
+
 	end_timestamp = int(time())
-
-	results = {
-		"params": {
-			"scenario": args.scenario,
-			"simulation_duration": args.simulation_duration,
-			"num_runs_per_simulation": args.num_runs_per_simulation,
-			"success_base_fee": args.success_base_fee,
-			"success_fee_rate": args.success_fee_rate,
-			"no_balance_failures": args.no_balance_failures,
-			"keep_receiver_upfront_fee": args.keep_receiver_upfront_fee,
-			"default_num_slots": args.default_num_slots,
-			"max_num_attempts_per_route_honest": args.max_num_attempts_honest,
-			"max_num_attempts_per_route_jamming": args.max_num_attempts_jamming,
-			"dust_limit": ProtocolParams["DUST_LIMIT"],
-			"honest_payment_every_seconds": PaymentFlowParams["HONEST_PAYMENT_EVERY_SECONDS"],
-			"min_processing_delay": PaymentFlowParams["MIN_DELAY"],
-			"expected_extra_processing_delay": PaymentFlowParams["EXPECTED_EXTRA_DELAY"],
-			"jam_delay": PaymentFlowParams["JAM_DELAY"]
-		},
-		"simulations": {
-			"honest": sorted(
-				results_honest,
-				key=lambda d: (d["upfront_base_coeff"], d["upfront_rate_coeff"]),
-				reverse=False),
-			"jamming": sorted(
-				results_jamming,
-				key=lambda d: (d["upfront_base_coeff"], d["upfront_rate_coeff"]),
-				reverse=False)
-		}
-	}
-
 	running_time = end_timestamp - start_timestamp
 	results_to_json_file(results, start_timestamp)
 	results_to_csv_file(results, start_timestamp)

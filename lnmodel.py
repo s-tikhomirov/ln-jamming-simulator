@@ -1,5 +1,7 @@
 from queue import PriorityQueue
 import networkx as nx
+from random import choice
+from string import digits
 
 from channel import ChannelDirection, ErrorType, FeeType
 from params import K, M, ProtocolParams
@@ -9,83 +11,108 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def get_channel_graph_from_json(snapshot_json, default_num_slots):
-	# Convert a JSON object (scheme: CLN's listchannels) into an UNDIRECTED graph (MultiGraph).
-	# Each edge corresponds to a channel. Edge id = channel id.
-	# Edge attributes: capacity, directions: [ChannelDirection0, ChannelDirection1]
-	g = nx.MultiGraph()
-	for cd in snapshot_json["channels"]:
-		cid = cd["short_channel_id"]
-		capacity = cd["satoshis"]
-		src, dst = cd["source"], cd["destination"]
-		direction = src < dst
-		# Fees may be set manually later in testing snapshots
-		upfront_base_fee = cd["base_fee_millisatoshi_upfront"] / K if "base_fee_millisatoshi_upfront" in cd else None
-		upfront_fee_rate = cd["fee_per_millionth_upfront"] / M if "fee_per_millionth_upfront" in cd else None
-		success_base_fee = cd["base_fee_millisatoshi"] / K if "base_fee_millisatoshi" in cd else None
-		success_fee_rate = cd["fee_per_millionth"] / M if "fee_per_millionth" in cd else None
-		cd = ChannelDirection(
-			is_enabled=cd["active"],
-			num_slots=default_num_slots,
-			upfront_base_fee=upfront_base_fee,
-			upfront_fee_rate=upfront_fee_rate,
-			success_base_fee=success_base_fee,
-			success_fee_rate=success_fee_rate
-		)
-		for node in [src, dst]:
-			g.add_node(node)
-		if src not in g.neighbors(dst):
-			g.add_edge(src, dst, cid, capacity=capacity, directions=[None, None])
-		else:
-			if cid not in (value[2] for value in g.edges(src, dst, keys=True)):
-				g.add_edge(src, dst, cid, capacity=capacity, directions=[None, None])
-		ch = g[src][dst][cid]
-		# if we encounter the same cid in the snapshot, it must have the same capacity
-		assert(capacity == ch["capacity"])
-		# we shouldn't yet have populated this direction for this cid
-		assert(ch["directions"][direction] is None)
-		ch["directions"][direction] = cd
-	for node in g.nodes:
-		g.nodes[node][FeeType.UPFRONT.value] = 0
-		g.nodes[node][FeeType.SUCCESS.value] = 0
-	return g
-
-
-def get_routing_graph_from_json(snapshot_json):
-	# Get a DIRECTED graph (MultiDiGraph) for routing from the same JSON object.
-	# Each edge corresponds to an enabled (i.e., "active") channel direction.
-	# We only parse cid and capacity (it's relevant for routing).
-	# All other attributes (fee functions, revenues) are stored in the undirected channel graph.
-	g = nx.MultiDiGraph()
-	for cd in snapshot_json["channels"]:
-		if not cd["active"]:
-			continue
-		cid = cd["short_channel_id"]
-		capacity = cd["satoshis"]
-		src, dst = cd["source"], cd["destination"]
-		g.add_edge(src, dst, cid, capacity=capacity)
-	return g
-
-
 class LNModel:
 	'''
 		A class to store the LN graph and do graph operations.
 	'''
 
-	def __init__(self, snapshot_json, default_num_slots):
+	def __init__(self, snapshot_json, default_num_slots, capacity_filtering_safety_margin=0.05):
 		'''
 			- snapshot_json
 				A JSON object describing the LN graph (CLN's listchannels).
 
 			- default_num_slots
 				Default number of slots in the graph.
+
+			- capacity_filtering_safety_margin
+				An extra allowed capacity allowed when filtering graph for sending a given amount.
 		'''
 		logger.debug(f"Initializing LNModel with {default_num_slots} slots per channel direction")
 		self.default_num_slots = default_num_slots
-		self.channel_graph = get_channel_graph_from_json(snapshot_json, self.default_num_slots)
-		self.routing_graph = get_routing_graph_from_json(snapshot_json)
+		self.get_graphs_from_json(snapshot_json)
 		# To filter graph views, add a safety margin to account for the (yet unknown) fees.
-		self.capacity_filtering_safety_margin = 0.05
+		self.capacity_filtering_safety_margin = capacity_filtering_safety_margin
+
+	def get_graphs_from_json(self, snapshot_json):
+		# Channel graph is an UNDIRECTED graph (MultiGraph).
+		# Each edge corresponds to a channel. Edge id = channel id.
+		# Edge attributes: capacity, directions: [ChannelDirection0, ChannelDirection1]
+		self.channel_graph = nx.MultiGraph()
+		# Routing graph is a DIRECTED graph (MultiDiGraph) from the same JSON object.
+		# Each edge corresponds to an enabled (i.e., "active") channel direction.
+		# We only parse cid and capacity (it's relevant for routing).
+		# All other attributes (fee functions, revenues) are stored in the undirected channel graph.
+		self.routing_graph = nx.MultiDiGraph()
+		for cd in snapshot_json["channels"]:
+			src, dst, capacity, cid, is_enabled = cd["source"], cd["destination"], cd["satoshis"], cd["short_channel_id"], cd["active"]
+			upfront_base_fee = cd["base_fee_millisatoshi_upfront"] / K if "base_fee_millisatoshi_upfront" in cd else None
+			upfront_fee_rate = cd["fee_per_millionth_upfront"] / M if "fee_per_millionth_upfront" in cd else None
+			success_base_fee = cd["base_fee_millisatoshi"] / K if "base_fee_millisatoshi" in cd else None
+			success_fee_rate = cd["fee_per_millionth"] / M if "fee_per_millionth" in cd else None
+			self.add_edge(src, dst, capacity, cid, upfront_base_fee, upfront_fee_rate, success_base_fee, success_fee_rate, is_enabled)
+		self.reset_revenues_for_all()
+
+	def add_edge(
+		self,
+		src,
+		dst,
+		capacity,
+		cid=None,
+		upfront_base_fee=0,
+		upfront_fee_rate=0,
+		success_base_fee=0,
+		success_fee_rate=0,
+		is_enabled=True,
+		num_slots_multiplier=1):
+		if cid is None:
+			cid = src[:1] + dst[:1] + "x" + "".join(choice(digits) for i in range(4))
+		self.add_edge_to_channel_graph(src, dst, capacity, cid, upfront_base_fee, upfront_fee_rate, success_base_fee, success_fee_rate, is_enabled, num_slots_multiplier)
+		if is_enabled:
+			self.add_edge_to_routing_graph(src, dst, capacity, cid)
+
+	def add_edge_to_channel_graph(self, src, dst, capacity, cid, upfront_base_fee, upfront_fee_rate, success_base_fee, success_fee_rate, is_enabled, num_slots_multiplier):
+		cd = ChannelDirection(
+			is_enabled=is_enabled,
+			num_slots=num_slots_multiplier * self.default_num_slots,
+			upfront_base_fee=upfront_base_fee,
+			upfront_fee_rate=upfront_fee_rate,
+			success_base_fee=success_base_fee,
+			success_fee_rate=success_fee_rate
+		)
+		for node in (src, dst):
+			self.channel_graph.add_node(node)
+			self.reset_revenue(node)
+		if src not in self.channel_graph.neighbors(dst) or cid not in self.channel_graph.get_edge_data(src, dst):
+			self.channel_graph.add_edge(src, dst, cid, capacity=capacity, directions=[None, None])
+		ch = self.channel_graph[src][dst][cid]
+		# if we encounter the same cid in the snapshot, it must have the same capacity
+		assert(capacity == ch["capacity"])
+		direction = src < dst
+		# we shouldn't yet have populated this direction for this cid
+		assert(ch["directions"][direction] is None)
+		ch["directions"][direction] = cd
+
+	def add_edge_to_routing_graph(self, src, dst, capacity, cid):
+		self.routing_graph.add_edge(src, dst, cid, capacity=capacity, cid=cid)
+
+	def add_jammers_channels(
+		self,
+		send_to,
+		receive_from,
+		capacity=1000000,
+		num_slots_multiplier=2):
+		for node in send_to:
+			self.add_edge(
+				src="JammerSender",
+				dst=node,
+				capacity=capacity,
+				num_slots_multiplier=num_slots_multiplier)
+		for node in receive_from:
+			self.add_edge(
+				src=node,
+				dst="JammerReceiver",
+				capacity=capacity,
+				num_slots_multiplier=num_slots_multiplier)
 
 	def add_revenue(self, node, fee_type, amount):
 		self.channel_graph.nodes[node][fee_type.value] += amount
@@ -96,8 +123,14 @@ class LNModel:
 	def get_revenue(self, node, fee_type):
 		return self.channel_graph.nodes[node][fee_type.value]
 
-	def set_revenue(self, node, fee_type, amount):
-		self.channel_graph.nodes[node][fee_type.value] = amount
+	def reset_revenue(self, node):
+		self.channel_graph.nodes[node][FeeType.UPFRONT.value] = 0
+		self.channel_graph.nodes[node][FeeType.SUCCESS.value] = 0
+
+	def reset_revenues_for_all(self):
+		logger.debug("Resetting all revenues")
+		for node in self.channel_graph.nodes:
+			self.reset_revenue(node)
 
 	def get_routing_graph_for_amount(self, amount):
 		# Return a graph view that only includes edges with capacity >= amount
@@ -254,12 +287,6 @@ class LNModel:
 			print("Success:", success_revenue)
 			print("Total:", upfront_revenue + success_revenue)
 
-	def reset_revenues(self):
-		logger.debug("Resetting all revenues")
-		for node in self.channel_graph.nodes:
-			self.set_revenue(node, FeeType.SUCCESS, 0)
-			self.set_revenue(node, FeeType.UPFRONT, 0)
-
 	def reset_in_flight_htlcs(self):
 		logger.debug("Resetting all in-flight HTLCs")
 		for u_node, d_node in self.routing_graph.edges():
@@ -271,5 +298,5 @@ class LNModel:
 					ch_dir.slots = PriorityQueue(maxsize=ch_dir.num_slots)
 
 	def reset(self):
-		self.reset_revenues()
+		self.reset_revenues_for_all()
 		self.reset_in_flight_htlcs()

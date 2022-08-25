@@ -57,20 +57,6 @@
          "active": true
       },
       {
-         "source": "JammerSender",
-         "destination": "Alice",
-         "short_channel_id": "JsAx0",
-         "satoshis": 1000000,
-         "active": true
-      },
-      {
-         "source": "Dave",
-         "destination": "JammerReceiver",
-         "short_channel_id": "DJrx0",
-         "satoshis": 1000000,
-         "active": true
-      },
-      {
          "source": "Bob",
          "destination": "Charlie",
          "short_channel_id": "BCx0",

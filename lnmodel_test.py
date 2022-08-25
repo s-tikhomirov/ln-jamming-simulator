@@ -1,4 +1,4 @@
-from lnmodel import LNModel, FeeType, get_channel_graph_from_json, get_routing_graph_from_json
+from lnmodel import LNModel, FeeType
 from channel import dir0, dir1
 
 import pytest
@@ -180,8 +180,12 @@ def example_amounts():
 	return amounts
 
 
-def test_get_channel_graph_from_json(example_snapshot_json):
-	g = get_channel_graph_from_json(example_snapshot_json, DEFAULT_NUM_SLOTS)
+def test_add_edge(example_snapshot_json):
+	return True
+
+
+def test_get_channel_graph_from_json(example_ln_model):
+	g = example_ln_model.channel_graph
 	assert(all(n in g.nodes() for n in [a, b, c, d, cr]))
 
 	# Alice - Bob has one bi-directional channel
@@ -232,8 +236,8 @@ def test_get_channel_graph_from_json(example_snapshot_json):
 		assert(xy_edge_data[xy_cid]["directions"][dir1] is None)
 
 
-def test_get_routing_graph_from_json(example_snapshot_json):
-	g = get_routing_graph_from_json(example_snapshot_json)
+def test_get_routing_graph_from_json(example_ln_model):
+	g = example_ln_model.routing_graph
 	assert(all(n in g.nodes() for n in [a, b, c, d, cr]))
 
 	# Alice - Bob

@@ -83,33 +83,23 @@ class Experiment:
 
 	def run_pair_of_simulations(
 		self,
-		schedule_generation_funciton_honest,
-		schedule_generation_funciton_jamming,
+		schedule_generation_function_honest,
+		schedule_generation_function_jamming,
 		upfront_base_coeff_range,
-		upfront_rate_coeff_range,
-		attackers_nodes,
-		attackers_slots_coeff=2):
+		upfront_rate_coeff_range):
 		'''
 			Run two simulations that only differ in schedule generation functions (honest and jamming)
 		'''
 
-		# give attacker's channels twice as many slots as the default number of slots
-		for attackers_node in attackers_nodes:
-			for neighbor in self.ln_model.channel_graph.neighbors(attackers_node):
-				self.ln_model.set_num_slots(
-					attackers_node,
-					neighbor,
-					attackers_slots_coeff * self.ln_model.default_num_slots)
-
 		logger.info("Starting jamming simulations")
 		simulation_series_results_jamming = self.run_simulations(
-			schedule_generation_funciton_jamming,
+			schedule_generation_function_jamming,
 			upfront_base_coeff_range,
 			upfront_rate_coeff_range)
 
 		logger.info("Starting honest simulations")
 		simulation_series_results_honest = self.run_simulations(
-			schedule_generation_funciton_honest,
+			schedule_generation_function_honest,
 			upfront_base_coeff_range,
 			upfront_rate_coeff_range)
 

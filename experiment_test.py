@@ -44,6 +44,18 @@ def example_ln_model(success_base_fee, success_fee_rate):
 	}
 	snapshot_json = {"channels": [channel_ABx0, channel_BCx0, channel_CDx0]}
 	ln_model = LNModel(snapshot_json, default_num_slots=5)
+	ln_model.add_edge(
+		src="JammerSender",
+		dst="Bob",
+		capacity=1000000,
+		is_enabled=True,
+		num_slots_multiplier=2)
+	ln_model.add_edge(
+		src="Charlie",
+		dst="JammerReceiver",
+		capacity=1000000,
+		is_enabled=True,
+		num_slots_multiplier=2)
 	ln_model.set_fee_for_all(
 		FeeType.SUCCESS,
 		success_base_fee,
@@ -76,6 +88,18 @@ def example_ln_model_small(success_base_fee, success_fee_rate):
 	}
 	snapshot_json = {"channels": [channel_ABx0, channel_BCx0, channel_CDx0]}
 	ln_model = LNModel(snapshot_json, default_num_slots=5)
+	ln_model.add_edge(
+		src="JammerSender",
+		dst="Bob",
+		capacity=1000000,
+		is_enabled=True,
+		num_slots_multiplier=2)
+	ln_model.add_edge(
+		src="Charlie",
+		dst="JammerReceiver",
+		capacity=1000000,
+		is_enabled=True,
+		num_slots_multiplier=2)
 	ln_model.set_fee_for_all(
 		FeeType.SUCCESS,
 		success_base_fee,
@@ -117,7 +141,7 @@ def simulation_duration():
 
 
 @pytest.fixture
-def schedule_generation_funciton_honest(simulation_duration):
+def schedule_generation_function_honest(simulation_duration):
 	return partial(lambda: generate_honest_schedule(
 		senders_list=["Alice"],
 		receivers_list=["Dave"],
@@ -125,26 +149,23 @@ def schedule_generation_funciton_honest(simulation_duration):
 
 
 @pytest.fixture
-def schedule_generation_funciton_jamming(simulation_duration):
+def schedule_generation_function_jamming(simulation_duration):
 	return partial(lambda: generate_jamming_schedule(
-		sender="Alice",
-		receiver="Dave",
 		duration=simulation_duration,
 		must_route_via=["Bob", "Charlie"]))
 
 
 def test_experiment_no_balance_failures(
 	example_experiment,
-	schedule_generation_funciton_honest,
-	schedule_generation_funciton_jamming,
+	schedule_generation_function_honest,
+	schedule_generation_function_jamming,
 	simulation_duration):
 	experiment = example_experiment
 	results_honest, results_jamming = experiment.run_pair_of_simulations(
-		schedule_generation_funciton_honest,
-		schedule_generation_funciton_jamming,
+		schedule_generation_function_honest,
+		schedule_generation_function_jamming,
 		upfront_base_coeff_range=[0, 0.01],
-		upfront_rate_coeff_range=[0, 0.1],
-		attackers_nodes=("Alice", "Dave"))
+		upfront_rate_coeff_range=[0, 0.1])
 	results = {
 		"simulations": {
 			"honest": results_honest,
@@ -156,17 +177,16 @@ def test_experiment_no_balance_failures(
 
 def test_experiment_balance_failures_multiple_jamming_attempts(
 	example_experiment_small,
-	schedule_generation_funciton_honest,
-	schedule_generation_funciton_jamming,
+	schedule_generation_function_honest,
+	schedule_generation_function_jamming,
 	simulation_duration):
 	experiment = example_experiment_small
 	experiment.simulator.no_balance_failures = False
 	results_honest, results_jamming = experiment.run_pair_of_simulations(
-		schedule_generation_funciton_honest,
-		schedule_generation_funciton_jamming,
+		schedule_generation_function_honest,
+		schedule_generation_function_jamming,
 		upfront_base_coeff_range=[0, 0.01],
-		upfront_rate_coeff_range=[0, 0.1],
-		attackers_nodes=("Alice", "Dave"))
+		upfront_rate_coeff_range=[0, 0.1])
 	results = {
 		"simulations": {
 			"honest": results_honest,
