@@ -9,6 +9,9 @@ from params import (
 	ProtocolParams,
 	PaymentFlowParams)
 
+import logging
+logger = logging.getLogger(__name__)
+
 
 class Event:
 	'''
@@ -124,7 +127,7 @@ class Schedule:
 		return time, event
 
 	def get_all_events(self):
-		# Only used for printing while debugging.
+		# Only used for debugging.
 		# Note: this clears the queue!
 		timed_events = []
 		while not self.schedule.empty():

@@ -1,6 +1,9 @@
 from random import choice
 from string import hexdigits
 
+import logging
+logger = logging.getLogger(__name__)
+
 
 class Payment:
 	'''
@@ -74,7 +77,7 @@ class Payment:
 			self.desired_result = downstream_payment.desired_result
 		# Note: amount = body + success-case fee (by definition!)
 		# We don't have to store body and success_fee separately at every level.
-		# We do so for clearer printing and sanity checks.
+		# We do so for clearer output and sanity checks.
 		self.amount = self.body + self.success_fee
 		# upfront-fee is calculated based on the _amount_
 		downstream_upfront_fee = 0 if downstream_payment is None else downstream_payment.upfront_fee

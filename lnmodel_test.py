@@ -1,4 +1,4 @@
-from lnmodel import LNModel, RevenueType, get_channel_graph_from_json, get_routing_graph_from_json
+from lnmodel import LNModel, FeeType, get_channel_graph_from_json, get_routing_graph_from_json
 from channel import dir0, dir1
 
 import pytest
@@ -285,18 +285,18 @@ def test_get_routing_graph_from_json(example_snapshot_json):
 def test_revenue(example_ln_model):
 	# all revenues must be zero initially
 	for n in example_ln_model.channel_graph.nodes():
-		assert(example_ln_model.get_revenue(n, RevenueType.UPFRONT) == 0)
-		assert(example_ln_model.get_revenue(n, RevenueType.SUCCESS) == 0)
+		assert(example_ln_model.get_revenue(n, FeeType.UPFRONT) == 0)
+		assert(example_ln_model.get_revenue(n, FeeType.SUCCESS) == 0)
 	assert("Alice" in example_ln_model.channel_graph.nodes())
 	# add 10 to Alice's success revenue, it should become 10
 	# also make sure that changes in one revenue type don't affect the other
-	example_ln_model.add_revenue("Alice", RevenueType.SUCCESS, 10)
-	assert(example_ln_model.get_revenue("Alice", RevenueType.SUCCESS) == 10)
-	assert(example_ln_model.get_revenue("Alice", RevenueType.UPFRONT) == 0)
+	example_ln_model.add_revenue("Alice", FeeType.SUCCESS, 10)
+	assert(example_ln_model.get_revenue("Alice", FeeType.SUCCESS) == 10)
+	assert(example_ln_model.get_revenue("Alice", FeeType.UPFRONT) == 0)
 	# subtract 20 from Alice's upfront revenue, it should become -20
-	example_ln_model.subtract_revenue("Alice", RevenueType.UPFRONT, 20)
-	assert(example_ln_model.get_revenue("Alice", RevenueType.SUCCESS) == 10)
-	assert(example_ln_model.get_revenue("Alice", RevenueType.UPFRONT) == -20)
+	example_ln_model.subtract_revenue("Alice", FeeType.UPFRONT, 20)
+	assert(example_ln_model.get_revenue("Alice", FeeType.SUCCESS) == 10)
+	assert(example_ln_model.get_revenue("Alice", FeeType.UPFRONT) == -20)
 
 
 def test_get_routing_graph_for_amount(example_ln_model, example_amounts):
@@ -372,5 +372,5 @@ def test_set_fee(example_ln_model):
 	amount = 100
 	ch_dir = example_ln_model.channel_graph.get_edge_data(a, b)["ABx0"]["directions"][a < b]
 	assert(ch_dir.success_fee_function(amount) == 0)
-	example_ln_model.set_fee(a, b, RevenueType.SUCCESS, 1, 0.02)
+	example_ln_model.set_fee(a, b, FeeType.SUCCESS, 1, 0.02)
 	assert(ch_dir.success_fee_function(amount) == 3)

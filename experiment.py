@@ -1,6 +1,9 @@
-from channel import RevenueType
+from channel import FeeType
 
 from statistics import mean
+
+import logging
+logger = logging.getLogger(__name__)
 
 
 class Experiment:
@@ -38,20 +41,20 @@ class Experiment:
 			tmp_num_sent, tmp_num_failed, tmp_num_reached_receiver = [], [], []
 			tmp_revenues = {node: [] for node in self.ln_model.channel_graph.nodes}
 			for i in range(self.num_runs_per_simulation):
-				#print("    Simulation", i + 1, "of", self.num_runs_per_simulation)
+				logger.debug(f"Simulation {i + 1} of {self.num_runs_per_simulation}")
 				# we can't generate schedules out of cycle because they get depleted during execution
 				# (PriorityQueue does not support copying.)
 				schedule = schedule_generation_funciton()
 				num_sent, num_failed, num_reached_receiver = self.simulator.execute_schedule(
 					schedule,
 					self.ln_model)
-				#print(num_sent, num_failed, num_reached_receiver)
+				logger.debug(f"{num_sent} sent, {num_failed} failed, {num_reached_receiver} reached receiver")
 				tmp_num_sent.append(num_sent)
 				tmp_num_failed.append(num_failed)
 				tmp_num_reached_receiver.append(num_reached_receiver)
 				for node in self.ln_model.channel_graph.nodes:
-					upfront_revenue = self.ln_model.get_revenue(node, RevenueType.UPFRONT)
-					success_revenue = self.ln_model.get_revenue(node, RevenueType.SUCCESS)
+					upfront_revenue = self.ln_model.get_revenue(node, FeeType.UPFRONT)
+					success_revenue = self.ln_model.get_revenue(node, FeeType.SUCCESS)
 					tmp_revenues[node].append(upfront_revenue + success_revenue)
 				self.ln_model.reset()
 			stats = {
@@ -66,7 +69,7 @@ class Experiment:
 		simulation_series_results = []
 		for upfront_base_coeff in upfront_base_coeff_range:
 			for upfront_rate_coeff in upfront_rate_coeff_range:
-				print("\nStarting simulation with upfront fee coefficients:", upfront_base_coeff, upfront_rate_coeff)
+				logger.info(f"Starting simulation with upfront fee coefficients: base {upfront_base_coeff}, rate {upfront_rate_coeff}")
 				self.ln_model.set_upfront_fee_from_coeff_for_all(upfront_base_coeff, upfront_rate_coeff)
 				stats, revenues = run_simulation()
 				result = {
@@ -98,12 +101,13 @@ class Experiment:
 					neighbor,
 					attackers_slots_coeff * self.ln_model.default_num_slots)
 
-		# FIXME: order matters here for some reason: run honest experiments first, then jamming
+		logger.info("Starting jamming simulations")
 		simulation_series_results_jamming = self.run_simulations(
 			schedule_generation_funciton_jamming,
 			upfront_base_coeff_range,
 			upfront_rate_coeff_range)
 
+		logger.info("Starting honest simulations")
 		simulation_series_results_honest = self.run_simulations(
 			schedule_generation_funciton_honest,
 			upfront_base_coeff_range,

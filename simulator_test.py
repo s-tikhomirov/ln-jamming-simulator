@@ -4,7 +4,7 @@ import pytest
 
 from simulator import Simulator, body_for_amount
 from schedule import Schedule, Event
-from lnmodel import LNModel, RevenueType
+from lnmodel import LNModel, FeeType
 from channel import ErrorType
 from params import honest_amount_function, honest_proccesing_delay_function, honest_generation_delay_function
 
@@ -45,14 +45,14 @@ def test_simulator_one_successful_payment(example_ln_model, example_simulator):
 	assert(num_reached_receiver == 1)
 	assert_final_revenue_correctness(sim, num_sent)
 	# Now we make specific tests; Dave's revenues are zero by construction (tested above)
-	a_rev_upfront = sim.ln_model.get_revenue("Alice", RevenueType.UPFRONT)
-	a_rev_success = sim.ln_model.get_revenue("Alice", RevenueType.SUCCESS)
-	b_rev_upfront = sim.ln_model.get_revenue("Mary", RevenueType.UPFRONT)
-	b_rev_success = sim.ln_model.get_revenue("Mary", RevenueType.SUCCESS)
-	c_rev_upfront = sim.ln_model.get_revenue("Charlie", RevenueType.UPFRONT)
-	c_rev_success = sim.ln_model.get_revenue("Charlie", RevenueType.SUCCESS)
-	d_rev_upfront = sim.ln_model.get_revenue("Dave", RevenueType.UPFRONT)
-	d_rev_success = sim.ln_model.get_revenue("Dave", RevenueType.SUCCESS)
+	a_rev_upfront = sim.ln_model.get_revenue("Alice", FeeType.UPFRONT)
+	a_rev_success = sim.ln_model.get_revenue("Alice", FeeType.SUCCESS)
+	b_rev_upfront = sim.ln_model.get_revenue("Mary", FeeType.UPFRONT)
+	b_rev_success = sim.ln_model.get_revenue("Mary", FeeType.SUCCESS)
+	c_rev_upfront = sim.ln_model.get_revenue("Charlie", FeeType.UPFRONT)
+	c_rev_success = sim.ln_model.get_revenue("Charlie", FeeType.SUCCESS)
+	d_rev_upfront = sim.ln_model.get_revenue("Dave", FeeType.UPFRONT)
+	d_rev_success = sim.ln_model.get_revenue("Dave", FeeType.SUCCESS)
 	# The following holds for these fee policies (success / upfront):
 	# A-B: 6+6% / 5+5%
 	# B-C: 4+4% / 3+3%
@@ -85,14 +85,14 @@ def test_simulator_one_jam_batch(example_ln_model, example_simulator):
 	# the third jam fails because of lack of slots at the first hop
 	assert_final_revenue_correctness(sim, num_sent)
 	# Now we make specific tests; Dave's revenues are zero by construction (tested above)
-	a_rev_upfront = sim.ln_model.get_revenue("Alice", RevenueType.UPFRONT)
-	a_rev_success = sim.ln_model.get_revenue("Alice", RevenueType.SUCCESS)
-	b_rev_upfront = sim.ln_model.get_revenue("Mary", RevenueType.UPFRONT)
-	b_rev_success = sim.ln_model.get_revenue("Mary", RevenueType.SUCCESS)
-	c_rev_upfront = sim.ln_model.get_revenue("Charlie", RevenueType.UPFRONT)
-	c_rev_success = sim.ln_model.get_revenue("Charlie", RevenueType.SUCCESS)
-	d_rev_upfront = sim.ln_model.get_revenue("Dave", RevenueType.UPFRONT)
-	d_rev_success = sim.ln_model.get_revenue("Dave", RevenueType.SUCCESS)
+	a_rev_upfront = sim.ln_model.get_revenue("Alice", FeeType.UPFRONT)
+	a_rev_success = sim.ln_model.get_revenue("Alice", FeeType.SUCCESS)
+	b_rev_upfront = sim.ln_model.get_revenue("Mary", FeeType.UPFRONT)
+	b_rev_success = sim.ln_model.get_revenue("Mary", FeeType.SUCCESS)
+	c_rev_upfront = sim.ln_model.get_revenue("Charlie", FeeType.UPFRONT)
+	c_rev_success = sim.ln_model.get_revenue("Charlie", FeeType.SUCCESS)
+	d_rev_upfront = sim.ln_model.get_revenue("Dave", FeeType.UPFRONT)
+	d_rev_success = sim.ln_model.get_revenue("Dave", FeeType.SUCCESS)
 	# The following holds for these fee policies (success / upfront):
 	# A-B: 6+6% / 5+5%
 	# B-C: 4+4% / 3+3%
@@ -119,14 +119,14 @@ def test_simulator_end_htlc_resolution(example_ln_model, example_simulator):
 	# success-case revenues don't change; upfront revenues are twice as high
 	assert_final_revenue_correctness(sim, num_sent)
 	# Now we make specific tests; Dave's revenues are zero by construction (tested above)
-	a_rev_upfront = sim.ln_model.get_revenue("Alice", RevenueType.UPFRONT)
-	a_rev_success = sim.ln_model.get_revenue("Alice", RevenueType.SUCCESS)
-	b_rev_upfront = sim.ln_model.get_revenue("Mary", RevenueType.UPFRONT)
-	b_rev_success = sim.ln_model.get_revenue("Mary", RevenueType.SUCCESS)
-	c_rev_upfront = sim.ln_model.get_revenue("Charlie", RevenueType.UPFRONT)
-	c_rev_success = sim.ln_model.get_revenue("Charlie", RevenueType.SUCCESS)
-	d_rev_upfront = sim.ln_model.get_revenue("Dave", RevenueType.UPFRONT)
-	d_rev_success = sim.ln_model.get_revenue("Dave", RevenueType.SUCCESS)
+	a_rev_upfront = sim.ln_model.get_revenue("Alice", FeeType.UPFRONT)
+	a_rev_success = sim.ln_model.get_revenue("Alice", FeeType.SUCCESS)
+	b_rev_upfront = sim.ln_model.get_revenue("Mary", FeeType.UPFRONT)
+	b_rev_success = sim.ln_model.get_revenue("Mary", FeeType.SUCCESS)
+	c_rev_upfront = sim.ln_model.get_revenue("Charlie", FeeType.UPFRONT)
+	c_rev_success = sim.ln_model.get_revenue("Charlie", FeeType.SUCCESS)
+	d_rev_upfront = sim.ln_model.get_revenue("Dave", FeeType.UPFRONT)
+	d_rev_success = sim.ln_model.get_revenue("Dave", FeeType.SUCCESS)
 	# The following holds for these fee policies (success / upfront):
 	# A-B: 6+6% / 5+5%
 	# B-C: 4+4% / 3+3%
@@ -168,14 +168,14 @@ def test_simulator_jamming(example_ln_model, example_simulator):
 	sch.put_event(0, Event("Alice", "Dave", 100, jam_processing_delay, False))
 	sim.target_node_pair = (("Mary", "Charlie"))
 	num_sent, num_failed, num_reached_receiver = sim.execute_schedule(sch, example_ln_model)
-	a_rev_upfront = sim.ln_model.get_revenue("Alice", RevenueType.UPFRONT)
-	a_rev_success = sim.ln_model.get_revenue("Alice", RevenueType.SUCCESS)
-	b_rev_upfront = sim.ln_model.get_revenue("Mary", RevenueType.UPFRONT)
-	b_rev_success = sim.ln_model.get_revenue("Mary", RevenueType.SUCCESS)
-	c_rev_upfront = sim.ln_model.get_revenue("Charlie", RevenueType.UPFRONT)
-	c_rev_success = sim.ln_model.get_revenue("Charlie", RevenueType.SUCCESS)
-	d_rev_upfront = sim.ln_model.get_revenue("Dave", RevenueType.UPFRONT)
-	d_rev_success = sim.ln_model.get_revenue("Dave", RevenueType.SUCCESS)
+	a_rev_upfront = sim.ln_model.get_revenue("Alice", FeeType.UPFRONT)
+	a_rev_success = sim.ln_model.get_revenue("Alice", FeeType.SUCCESS)
+	b_rev_upfront = sim.ln_model.get_revenue("Mary", FeeType.UPFRONT)
+	b_rev_success = sim.ln_model.get_revenue("Mary", FeeType.SUCCESS)
+	c_rev_upfront = sim.ln_model.get_revenue("Charlie", FeeType.UPFRONT)
+	c_rev_success = sim.ln_model.get_revenue("Charlie", FeeType.SUCCESS)
+	d_rev_upfront = sim.ln_model.get_revenue("Dave", FeeType.UPFRONT)
+	d_rev_success = sim.ln_model.get_revenue("Dave", FeeType.SUCCESS)
 	# The following holds for these fee policies (success / upfront):
 	# A-B: 6+6% / 5+5%
 	# B-C: 4+4% / 3+3%
@@ -196,14 +196,14 @@ def test_simulator_jamming(example_ln_model, example_simulator):
 
 
 def assert_final_revenue_correctness(sim, num_sent):
-	a_rev_upfront = sim.ln_model.get_revenue("Alice", RevenueType.UPFRONT)
-	a_rev_success = sim.ln_model.get_revenue("Alice", RevenueType.SUCCESS)
-	b_rev_upfront = sim.ln_model.get_revenue("Mary", RevenueType.UPFRONT)
-	b_rev_success = sim.ln_model.get_revenue("Mary", RevenueType.SUCCESS)
-	c_rev_upfront = sim.ln_model.get_revenue("Charlie", RevenueType.UPFRONT)
-	c_rev_success = sim.ln_model.get_revenue("Charlie", RevenueType.SUCCESS)
-	d_rev_upfront = sim.ln_model.get_revenue("Dave", RevenueType.UPFRONT)
-	d_rev_success = sim.ln_model.get_revenue("Dave", RevenueType.SUCCESS)
+	a_rev_upfront = sim.ln_model.get_revenue("Alice", FeeType.UPFRONT)
+	a_rev_success = sim.ln_model.get_revenue("Alice", FeeType.SUCCESS)
+	b_rev_upfront = sim.ln_model.get_revenue("Mary", FeeType.UPFRONT)
+	b_rev_success = sim.ln_model.get_revenue("Mary", FeeType.SUCCESS)
+	c_rev_upfront = sim.ln_model.get_revenue("Charlie", FeeType.UPFRONT)
+	c_rev_success = sim.ln_model.get_revenue("Charlie", FeeType.SUCCESS)
+	d_rev_upfront = sim.ln_model.get_revenue("Dave", FeeType.UPFRONT)
+	d_rev_success = sim.ln_model.get_revenue("Dave", FeeType.SUCCESS)
 
 	# Alice only sends payments; her total revenue is negative
 	# (assuming non-zero fees)

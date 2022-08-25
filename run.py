@@ -1,6 +1,6 @@
 from experiment import Experiment
 from params import FeeParams, ProtocolParams, PaymentFlowParams
-from lnmodel import LNModel, RevenueType
+from lnmodel import LNModel, FeeType
 from simulator import Simulator
 from schedule import generate_honest_schedule, generate_jamming_schedule
 
@@ -9,6 +9,11 @@ from time import time
 from random import seed
 import json
 import csv
+import sys
+
+import logging
+logger = logging.getLogger(__name__)
+
 
 DEFAULT_UPFRONT_BASE_COEFF_RANGE = [0, 0.001, 0.002, 0.005, 0.01]
 DEFAULT_UPFRONT_RATE_COEFF_RANGE = [0, 0.1, 0.2, 0.5, 1]
@@ -98,10 +103,28 @@ def main():
 		type=int,
 		help="Seed for randomness initialization."
 	)
+	parser.add_argument(
+		"--log_level",
+		type=str,
+		choices={"critical", "error", "warning", "info", "debug"},
+		default="info",
+		help="Seed for randomness initialization."
+	)
 	args = parser.parse_args()
 
+	start_timestamp = int(time())
+	log_levels = {
+		"critical": logging.CRITICAL,
+		"error": logging.ERROR,
+		"warn": logging.WARNING,
+		"warning": logging.WARNING,
+		"info": logging.INFO,
+		"debug": logging.DEBUG
+	}
+	initialize_logging(start_timestamp, log_levels[args.log_level])
+
 	if args.seed is not None:
-		print("Initializing randomness seed:", args.seed)
+		logger.debug(f"Initializing randomness seed: {args.seed}")
 		seed(args.seed)
 
 	simulator = Simulator(
@@ -117,7 +140,7 @@ def main():
 
 		ln_model = LNModel(snapshot_json, args.default_num_slots)
 		ln_model.set_fee_for_all(
-			RevenueType.SUCCESS,
+			FeeType.SUCCESS,
 			args.success_base_fee,
 			args.success_fee_rate)
 
@@ -154,7 +177,7 @@ def main():
 
 		ln_model = LNModel(snapshot_json, args.default_num_slots)
 		ln_model.set_fee_for_all(
-			RevenueType.SUCCESS,
+			FeeType.SUCCESS,
 			args.success_base_fee,
 			args.success_fee_rate)
 
@@ -185,7 +208,6 @@ def main():
 			attackers_nodes=("JammerSender", "JammerReceiver"))
 		return results_honest, results_jamming
 
-	start_timestamp = int(time())
 	if args.scenario == "abcd":
 		results_honest, results_jamming = run_linear_experiments()
 	elif args.scenario == "wheel":
@@ -223,9 +245,9 @@ def main():
 	}
 
 	running_time = end_timestamp - start_timestamp
-	results_to_json_file(results, end_timestamp)
-	results_to_csv_file(results, end_timestamp)
-	print("\nRunning time (min):", round(running_time / 60, 1))
+	results_to_json_file(results, start_timestamp)
+	results_to_csv_file(results, start_timestamp)
+	logger.info(f"Running time (min): {round(running_time / 60, 1)}")
 
 
 def results_to_json_file(results, timestamp):
@@ -265,6 +287,23 @@ def results_to_csv_file(results, timestamp):
 			writer.writerow("")
 		for param_name in results["params"]:
 			writer.writerow([param_name, results["params"][param_name]])
+
+
+def initialize_logging(start_timestamp, log_level):
+	LOG_FILENAME = "results/" + str(start_timestamp) + "-log.txt"
+	#logging.basicConfig(filename=LOG_FILENAME, filemode="w", level=logging.DEBUG)
+	root_logger = logging.getLogger()
+	root_logger.setLevel(log_level)
+	format_string = "[%(levelname)s] %(name)s: %(message)s"
+	# Console output
+	root_logger.handler = logging.StreamHandler(sys.stdout)
+	formatter = logging.Formatter(format_string)
+	root_logger.handler.setFormatter(formatter)
+	root_logger.addHandler(root_logger.handler)
+	# File output
+	fh = logging.FileHandler(LOG_FILENAME)
+	fh.setFormatter(logging.Formatter(format_string))
+	root_logger.addHandler(fh)
 
 
 if __name__ == "__main__":

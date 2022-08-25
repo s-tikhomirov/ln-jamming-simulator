@@ -4,6 +4,9 @@ from functools import partial
 
 from params import generic_fee_function
 
+import logging
+logger = logging.getLogger(__name__)
+
 # There are two channel directions encoded with a boolean value.
 # Direction "dir0" (True) goes from smaller node ID to larger (alphanumerically).
 # Direction "dir1" (False) is the opposite.
@@ -19,9 +22,9 @@ class ErrorType(Enum):
 	FAILED_DELIBERATELY = "failed_deliberately"
 
 
-class RevenueType(Enum):
-	UPFRONT = "upfront_revenue"
-	SUCCESS = "success_revenue"
+class FeeType(Enum):
+	UPFRONT = "upfront"
+	SUCCESS = "success"
 
 
 class ChannelDirection:
@@ -67,8 +70,8 @@ class ChannelDirection:
 				The error type to return when deliberately failing a payment.
 		'''
 		self.is_enabled = is_enabled
-		self.set_fee(RevenueType.UPFRONT, upfront_base_fee, upfront_fee_rate)
-		self.set_fee(RevenueType.SUCCESS, success_base_fee, success_fee_rate)
+		self.set_fee(FeeType.UPFRONT, upfront_base_fee, upfront_fee_rate)
+		self.set_fee(FeeType.SUCCESS, success_base_fee, success_fee_rate)
 		# we remember num_slots in a separate variable:
 		# there is no way to get maxsize from a queue after it's created
 		self.num_slots = num_slots
@@ -76,18 +79,18 @@ class ChannelDirection:
 		self.deliberately_fail_prob = deliberately_fail_prob
 		self.spoofing_error_type = spoofing_error_type
 
-	def set_fee(self, revenue_type, base_fee, fee_rate):
+	def set_fee(self, fee_type, base_fee, fee_rate):
 		fee_function = partial(lambda a: generic_fee_function(base_fee, fee_rate, a))
-		if revenue_type == RevenueType.UPFRONT:
+		if fee_type == FeeType.UPFRONT:
 			self.upfront_base_fee = base_fee
 			self.upfront_fee_rate = fee_rate
 			self.upfront_fee_function = fee_function
-		elif revenue_type == RevenueType.SUCCESS:
+		elif fee_type == FeeType.SUCCESS:
 			self.success_base_fee = base_fee
 			self.success_fee_rate = fee_rate
 			self.success_fee_function = fee_function
 		else:
-			#print("Unexpected fee type! Can't set fee.")
+			logger.error(f"Unexpected fee type {fee_type}! Can't set fee.")
 			pass
 
 	def set_num_slots(self, num_slots, copy_existing_htlcs=False):
@@ -100,7 +103,7 @@ class ChannelDirection:
 		self.slots = PriorityQueue(maxsize=num_slots)
 		if copy_existing_htlcs:
 			if old_slots.qsize() > num_slots:
-				# print("Can't copy over in-flight HTLCs into a resized queue!")
+				logger.error(f"Can't copy {old_slots.qsize()} HTLCs into queue of size {num_slots}!")
 				pass
 			else:
 				while not old_slots.empty():

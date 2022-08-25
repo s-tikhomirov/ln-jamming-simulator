@@ -1,5 +1,5 @@
 from experiment import Experiment
-from lnmodel import LNModel, RevenueType
+from lnmodel import LNModel, FeeType
 from simulator import Simulator
 from schedule import generate_honest_schedule, generate_jamming_schedule
 from params import PaymentFlowParams
@@ -45,7 +45,7 @@ def example_ln_model(success_base_fee, success_fee_rate):
 	snapshot_json = {"channels": [channel_ABx0, channel_BCx0, channel_CDx0]}
 	ln_model = LNModel(snapshot_json, default_num_slots=5)
 	ln_model.set_fee_for_all(
-		RevenueType.SUCCESS,
+		FeeType.SUCCESS,
 		success_base_fee,
 		success_fee_rate)
 	return ln_model
@@ -77,7 +77,7 @@ def example_ln_model_small(success_base_fee, success_fee_rate):
 	snapshot_json = {"channels": [channel_ABx0, channel_BCx0, channel_CDx0]}
 	ln_model = LNModel(snapshot_json, default_num_slots=5)
 	ln_model.set_fee_for_all(
-		RevenueType.SUCCESS,
+		FeeType.SUCCESS,
 		success_base_fee,
 		success_fee_rate)
 	return ln_model

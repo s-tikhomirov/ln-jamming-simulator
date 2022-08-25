@@ -29,7 +29,6 @@ def test_schedule_get_put(example_schedule):
 	event_time, new_event = 2, Event("Bob", "Charlie", 2000, 2, False)
 	example_schedule.put_event(event_time, new_event, current_time=1)
 	time, event = example_schedule.get_event()
-	#print("Got new event:", time, event)
 	assert(time == 2)
 	assert(event.sender == "Bob")
 	assert(event.receiver == "Charlie")
