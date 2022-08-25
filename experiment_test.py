@@ -151,8 +151,8 @@ def schedule_generation_function_honest(simulation_duration):
 @pytest.fixture
 def schedule_generation_function_jamming(simulation_duration):
 	return partial(lambda: generate_jamming_schedule(
-		duration=simulation_duration,
-		must_route_via=["Bob", "Charlie"]))
+		target_hops=[("Bob", "Charlie")],
+		duration=simulation_duration))
 
 
 def test_experiment_no_balance_failures(

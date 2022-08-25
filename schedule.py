@@ -160,17 +160,21 @@ def generate_honest_schedule(senders_list, receivers_list, duration, must_route_
 	return schedule
 
 
-def generate_jamming_schedule(duration, must_route_via):
+def generate_jamming_schedule(target_hops, duration):
 	# sender and receiver are "JammerSender" and "JammerReceiver"
+	# generate a jamming schedule that assumes that the jammer connects
+	# to ALL target nodes (JammerSender->A and B->JammerReceiver)
+	# for all directed target edges (A,B)
 	schedule = Schedule(duration=duration)
 	jam_amount = ProtocolParams["DUST_LIMIT"]
 	jam_delay = PaymentFlowParams["JAM_DELAY"]
-	first_jam = Event(
-		sender="JammerSender",
-		receiver="JammerReceiver",
-		amount=jam_amount,
-		processing_delay=jam_delay,
-		desired_result=False,
-		must_route_via=must_route_via)
-	schedule.put_event(0, first_jam)
+	for target_hop in target_hops:
+		initial_jam = Event(
+			sender="JammerSender",
+			receiver="JammerReceiver",
+			amount=jam_amount,
+			processing_delay=jam_delay,
+			desired_result=False,
+			must_route_via=target_hop)
+		schedule.put_event(0, initial_jam)
 	return schedule

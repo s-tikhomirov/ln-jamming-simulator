@@ -153,13 +153,13 @@ class Simulator:
 					if error_type in (ErrorType.LOW_BALANCE, ErrorType.FAILED_DELIBERATELY):
 						if num_jam_attempts_this_batch < self.max_num_attempts_per_route_jamming:
 							logger.debug(f"Jam failed because of low balance or deliberate failure, continue this batch")
-							logger.debug(f"Putting jam {event} into schedule with resolution time {now}")
+							logger.debug(f"Putting jam {event} into schedule for this batch: resolution time {now}")
 							schedule.put_event(now, event)
 							num_jam_attempts_this_batch += 1
 						else:
-							logger.debug(f"Coundn't fully jam target at time {now} after {num_jam_attempts_this_batch} attempts")
+							logger.info(f"Coundn't fully jam target at time {now} after {num_jam_attempts_this_batch} attempts")
 							logger.debug("Moving on to the next batch")
-							logger.debug(f"Putting jam {event} into schedule with resolution time {next_batch_time}")
+							logger.debug(f"Putting jam {event} into schedule for next batch: resolution time {next_batch_time}")
 							schedule.put_event(next_batch_time, event)
 							num_jam_attempts_this_batch = 1
 					elif error_type == ErrorType.NO_SLOTS:
@@ -168,7 +168,7 @@ class Simulator:
 							logger.warning(f"Jammer's slots depleted at {erring_node}. Allocate more slots to jammer's channels!")
 							pass
 						else:
-							logger.debug(f"Fully jammed at time {now}, sleeping until the next batch.")
+							logger.info(f"Hops {event.must_route_via} fully jammed at time {now}")
 							pass
 						num_jam_attempts_this_batch = 1
 						schedule.put_event(next_batch_time, event)

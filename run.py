@@ -27,7 +27,7 @@ def main():
 	parser.add_argument(
 		"--scenario",
 		type=str,
-		choices={"abcd", "wheel"},
+		choices={"abcd", "wheel", "wheel-short-routes", "wheel-long-routes"},
 		help="LN graph JSON filename."
 	)
 	parser.add_argument(
@@ -134,20 +134,49 @@ def main():
 		enforce_dust_limit=True,
 		keep_receiver_upfront_fee=args.keep_receiver_upfront_fee)
 
+	def get_target_hops(ln_model, strategy, target_node=None):
+		if strategy == "all":
+			target_hops = list(ln_model.routing_graph.edges(data=False))
+		elif strategy == "all_adjacent_to":
+			assert(target_node is not None)
+			in_edges = list(ln_model.routing_graph.in_edges(target_node, data=False))
+			out_edges = list(ln_model.routing_graph.out_edges(target_node, data=False))
+			target_hops = in_edges + out_edges
+		else:
+			logger.error(f"Unknown target hop selection strategy: {strategy}")
+		logger.debug(f"Selected target hops: {target_hops}")
+		return target_hops
+
 	def run_scenario(
 		snapshot_filename,
 		honest_senders,
 		honest_receivers,
-		jammer_sends_to,
-		jammer_receives_from,
+		target_hops=None,
+		jammer_sends_to_nodes=None,
+		jammer_receives_from_nodes=None,
 		honest_must_route_via=[],
 		jammer_must_route_via=[]):
 		with open(snapshot_filename, 'r') as snapshot_file:
 			snapshot_json = json.load(snapshot_file)
 		ln_model = LNModel(snapshot_json, args.default_num_slots)
-		ln_model.add_jammers_channels(
-			send_to=jammer_sends_to,
-			receive_from=jammer_receives_from)
+		assert((jammer_sends_to_nodes is None) == (jammer_receives_from_nodes is None))
+		jammer_opens_channels_to_all_targets = jammer_sends_to_nodes is None
+		if target_hops is None:
+			target_hops = get_target_hops(ln_model, strategy="all_adjacent_to", target_node="Hub")
+
+		if jammer_opens_channels_to_all_targets:
+			jammer_num_slots_multiplier = 2 * len(target_hops)
+			for (jammer_sends_to, jammer_receives_from) in target_hops:
+				ln_model.add_jammers_sending_channel(
+					node=jammer_sends_to,
+					num_slots_multiplier=jammer_num_slots_multiplier)
+				ln_model.add_jammers_receiving_channel(
+					node=jammer_receives_from,
+					num_slots_multiplier=jammer_num_slots_multiplier)
+		else:
+			ln_model.add_jammers_channels(
+				send_to_nodes=jammer_sends_to_nodes,
+				receive_from_nodes=jammer_receives_from_nodes)
 
 		def schedule_generation_function_honest():
 			return generate_honest_schedule(
@@ -158,8 +187,8 @@ def main():
 
 		def schedule_generation_function_jamming():
 			return generate_jamming_schedule(
-				duration=args.simulation_duration,
-				must_route_via=jammer_must_route_via)
+				target_hops=target_hops,
+				duration=args.simulation_duration)
 
 		ln_model.set_fee_for_all(
 			FeeType.SUCCESS,
@@ -213,8 +242,7 @@ def main():
 			snapshot_filename=ABCD_SNAPSHOT_FILENAME,
 			honest_senders=["Alice"],
 			honest_receivers=["Dave"],
-			jammer_sends_to=["Bob"],
-			jammer_receives_from=["Charlie"])
+			target_hops=[("Bob", "Charlie")])
 	elif args.scenario == "wheel":
 		results = run_scenario(
 			snapshot_filename=WHEEL_SNAPSHOT_FILENAME,
@@ -224,6 +252,23 @@ def main():
 			jammer_receives_from=["Dave"],
 			honest_must_route_via=["Hub"],
 			jammer_must_route_via=["Alice", "Hub", "Bob", "Charlie", "Hub", "Dave"])
+	elif args.scenario == "wheel-short-routes":
+		results = run_scenario(
+			snapshot_filename=WHEEL_SNAPSHOT_FILENAME,
+			honest_senders=["Alice", "Bob", "Charlie", "Dave"],
+			honest_receivers=["Alice", "Bob", "Charlie", "Dave"],
+			honest_must_route_via=["Hub"])
+	elif args.scenario == "wheel-long-routes":
+		logger.error(f"Not yet properly implemented for scenario {args.scenario}!")
+		exit()
+		# TODO: implementing this requires iterative route building through target hops
+		results = run_scenario(
+			snapshot_filename=WHEEL_SNAPSHOT_FILENAME,
+			honest_senders=["Alice", "Bob", "Charlie", "Dave"],
+			honest_receivers=["Alice", "Bob", "Charlie", "Dave"],
+			honest_must_route_via=["Hub"],
+			jammer_sends_to_nodes=["Alice"],
+			jammer_receives_from_nodes=["Dave"])
 
 	end_timestamp = int(time())
 	running_time = end_timestamp - start_timestamp

@@ -95,24 +95,37 @@ class LNModel:
 	def add_edge_to_routing_graph(self, src, dst, capacity, cid):
 		self.routing_graph.add_edge(src, dst, cid, capacity=capacity, cid=cid)
 
-	def add_jammers_channels(
-		self,
-		send_to,
-		receive_from,
-		capacity=1000000,
-		num_slots_multiplier=2):
-		for node in send_to:
+	def add_jammers_sending_channel(self, node, num_slots_multiplier, capacity=1000000):
+		if (
+			"JammerSender" in self.routing_graph
+			and "JammerSender" in self.routing_graph.predecessors(node)):
+			logger.debug(f"Already have a channel from JammerSender to {node}")
+		else:
+			logger.debug(f"Opening a channel from JammerSender to {node}")
 			self.add_edge(
 				src="JammerSender",
 				dst=node,
 				capacity=capacity,
 				num_slots_multiplier=num_slots_multiplier)
-		for node in receive_from:
+
+	def add_jammers_receiving_channel(self, node, num_slots_multiplier, capacity=1000000):
+		if (
+			"JammerReceiver" in self.routing_graph
+			and node in self.routing_graph.predecessors("JammerReceiver")):
+			logger.debug(f"Already have a channel from {node} to JammerReceiver")
+		else:
+			logger.debug(f"Opening a channel from {node} to JammerReceiver")
 			self.add_edge(
 				src=node,
 				dst="JammerReceiver",
 				capacity=capacity,
 				num_slots_multiplier=num_slots_multiplier)
+
+	def add_jammers_channels(self, send_to_nodes, receive_from_nodes):
+		for node in send_to_nodes:
+			self.add_jammers_sending_channel(node, num_slots_multiplier=2 * len(send_to_nodes))
+		for node in receive_from_nodes:
+			self.add_jammers_receiving_channel(node, num_slots_multiplier=2 * len(receive_from_nodes))
 
 	def add_revenue(self, node, fee_type, amount):
 		self.channel_graph.nodes[node][fee_type.value] += amount
@@ -149,8 +162,8 @@ class LNModel:
 		logger.debug(f"Finding route from {sender} to {receiver}" + (f" via {must_route_via_nodes}" if is_route_via else ""))
 		routing_graph = self.get_routing_graph_for_amount(
 			amount=(1 + self.capacity_filtering_safety_margin) * amount)
-		if not all([n in routing_graph for n in [sender, receiver] + must_route_via_nodes]):
-			not_in_routing_graph = [n for n in [sender, receiver] + must_route_via_nodes if n not in routing_graph]
+		not_in_routing_graph = [n for n in [sender, receiver] + list(must_route_via_nodes) if n not in routing_graph]
+		if not_in_routing_graph:
 			logger.warning(f"Can't find route from {sender} to {receiver} via {must_route_via_nodes} nodes {not_in_routing_graph} are not in the routing graph")
 			yield from ()
 		if is_route_via:
