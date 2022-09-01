@@ -166,7 +166,11 @@ def example_snapshot_json():
 
 @pytest.fixture
 def example_ln_model(example_snapshot_json):
-	return LNModel(example_snapshot_json, DEFAULT_NUM_SLOTS)
+	return LNModel(
+		example_snapshot_json,
+		DEFAULT_NUM_SLOTS,
+		no_balance_failures=True,
+		keep_receiver_upfront_fee=True)
 
 
 @pytest.fixture
@@ -178,10 +182,6 @@ def example_amounts():
 		"huge": 1000
 	}
 	return amounts
-
-
-def test_add_edge(example_snapshot_json):
-	return True
 
 
 def test_get_channel_graph_from_json(example_ln_model):
@@ -221,8 +221,9 @@ def test_get_channel_graph_from_json(example_ln_model):
 	assert(len(cd_edge_data) == 1 and "CDx0" in cd_edge_data)
 	assert(cd_edge_data["CDx0"]["directions"][dir0] is not None)
 	assert(cd_edge_data["CDx0"]["directions"][dir0].is_enabled)
-	assert(cd_edge_data["CDx0"]["directions"][dir1] is not None)
-	assert(not cd_edge_data["CDx0"]["directions"][dir1].is_enabled)
+	# UPD: we don't consider disabled channels
+	assert(cd_edge_data["CDx0"]["directions"][dir1] is None)
+	#assert(not cd_edge_data["CDx0"]["directions"][dir1].is_enabled)
 
 	# We also have uni-dir channels Bob->Craig->Dave
 	# (to test alternative routes)
@@ -326,18 +327,18 @@ def test_get_routing_graph_for_amount(example_ln_model, example_amounts):
 def test_get_routes(example_ln_model, example_amounts):
 	# get routes from Alice to Dave for moderate amount
 	# there should be two: via Bob-Charlie and Bob-Craig
-	routes = example_ln_model.get_routes(a, d, example_amounts["small"])
+	routes = example_ln_model.get_shortest_routes(a, d, example_amounts["small"])
 	routes_list = [p for p in routes]
 	assert(len(routes_list) == 2)
 	assert([a, b, c, d] in routes_list)
 	assert([a, b, cr, d] in routes_list)
 	# get routes for a medium amount: there should be only one
-	routes = example_ln_model.get_routes(a, d, example_amounts["medium"])
+	routes = example_ln_model.get_shortest_routes(a, d, example_amounts["medium"])
 	routes_list = [p for p in routes]
 	assert(len(routes_list) == 1)
 	assert([a, b, c, d] in routes_list)
 	# get routes for amount that is too big
-	routes = example_ln_model.get_routes(a, d, example_amounts["big"])
+	routes = example_ln_model.get_shortest_routes(a, d, example_amounts["big"])
 	routes_list = [p for p in routes]
 	assert(len(routes_list) == 0)
 
@@ -346,7 +347,7 @@ def test_get_routes_via_nodes(example_ln_model, example_amounts):
 	# generate all routes from Alice to Dave
 	# through the Bob-Charlie hop specifically
 	# (Craig should not be used)
-	routes = example_ln_model.get_routes(a, d, example_amounts["medium"], [b, c])
+	routes = example_ln_model.get_shortest_routes_via_nodes(a, d, example_amounts["medium"], [b, c])
 	routes_list = [p for p in routes]
 	assert(len(routes_list) == 1)
 	assert([a, b, c, d] in routes_list)
@@ -355,11 +356,11 @@ def test_get_routes_via_nodes(example_ln_model, example_amounts):
 # test directionality: there must not be a route B <--- C for a big amount
 def test_directionality(example_ln_model, example_amounts):
 	# B-C could forward a big amount in the opposite direction ("left")
-	routes = example_ln_model.get_routes(b, c, example_amounts["big"])
+	routes = example_ln_model.get_shortest_routes(b, c, example_amounts["big"])
 	routes_list = [p for p in routes]
 	assert(len(routes_list) == 0)
 	# but there is a route in the "left" direction
-	routes = example_ln_model.get_routes(c, b, example_amounts["big"])
+	routes = example_ln_model.get_shortest_routes(c, b, example_amounts["big"])
 	routes_list = [p for p in routes]
 	assert(len(routes_list) == 1)
 
@@ -367,7 +368,7 @@ def test_directionality(example_ln_model, example_amounts):
 # test disabled direction: there must not be a route C <--- D
 def test_disabled_channel_direction(example_ln_model, example_amounts):
 	# check that disabled direction doesn't work
-	routes = example_ln_model.get_routes(d, c, example_amounts["small"])
+	routes = example_ln_model.get_shortest_routes(d, c, example_amounts["small"])
 	routes_list = [p for p in routes]
 	assert(len(routes_list) == 0)
 

@@ -1,51 +1,13 @@
 from channel import FeeType, ErrorType
+from params import ProtocolParams
+from payment import Payment
+from router import Router
 
-from random import random
+from statistics import mean
+import networkx as nx
 
 import logging
 logger = logging.getLogger(__name__)
-
-
-def body_for_amount(target_amount, upfront_fee_function, precision=1, max_steps=50):
-	'''
-		Given target_amount and fee function, find amount such that:
-		amount + fee(amount) ~ target_amount
-	'''
-	min_body, max_body, num_step = 0, target_amount, 0
-	while True:
-		num_step += 1
-		body = round((min_body + max_body) / 2)
-		fee = upfront_fee_function(body)
-		amount = body + fee
-		if abs(target_amount - amount) < precision or num_step > max_steps:
-			break
-		if amount < target_amount:
-			min_body = body
-		else:
-			max_body = body
-	return body
-
-
-class InFlightHtlc:
-	'''
-		An in-flight HTLC.
-		As we don't model balances, an HTLC only contrains success-case fee.
-	'''
-
-	def __init__(self, payment_id, success_fee, desired_result):
-		self.payment_id = payment_id
-		self.success_fee = success_fee
-		self.desired_result = desired_result
-
-	def __repr__(self):
-		s = str((self.payment_id, self.success_fee, self.desired_result))
-		return s
-
-	def __lt__(self, other):
-		return self.payment_id < other.payment_id
-
-	def __gt__(self, other):
-		return other < self
 
 
 class Simulator:
@@ -57,22 +19,38 @@ class Simulator:
 
 	def __init__(
 		self,
+		ln_model,
+		target_hops,
 		max_num_attempts_per_route_honest,
 		max_num_attempts_per_route_jamming,
-		no_balance_failures=False,
+		max_num_routes_honest,
+		max_num_routes_jamming=None,
+		num_runs_per_simulation=1,
 		enforce_dust_limit=True,
 		subtract_last_hop_upfront_fee_for_honest_payments=True,
-		keep_receiver_upfront_fee=False):
+		jammer_must_route_via_nodes=[],
+		max_target_hops_per_route=10):
 		'''
+			- ln_model
+				An instance of LNModel to run the simulations with.
+
+			- target_hops
+				What the attacker wants to jam.
+
 			- max_num_attempts_per_route_honest
 				The maximum number of attempts to send an honest payment.
 
 			- max_num_attempts_per_route_jamming
 				The maximul number of attempts to send a jam (which is probably higher than that for honest payments).
 
-			- no_balance_failures
-				If True, channels don't fail because of low balance.
-				If False, channels fails. Probability depends on amount and capacity.
+			- max_num_routes_honest
+				The maximal number of different routes to try before an honest payment reaches the receiver.
+
+			- max_num_routes_jamming
+				The maximal number of different routes to try before all target hops are fully jammed.
+
+			- num_runs_per_simulation
+				The number of runs per simulation to average the results across.
 
 			- enforce_dust_limit
 				Not allow creating Payments with amount smaller than ProtocolParams["DUST_LIMIT"].
@@ -81,232 +59,285 @@ class Simulator:
 				Apply body_for_amount at Payment construction for honest payment.
 				Jams are always constructed without such adjustment to stay above the dust limit at all hops.
 
-			- keep_receiver_upfront_fee
-				Not nullify receiver's upfront fee revenue.
-				If amount had been adjusted at Payment construction, the receiver's upfront fee is part of payment.
-				Hence, technically this is not a revenue.
-				However, it may be useful to leave it to check for inveriants in tests (sum of all fees == 0).
+			- jammer_must_route_via_nodes
+				Override the router logic in favor of a hard-coded route.
+
+			- max_target_hops_per_route
+				Max desired number of target hops in a jammer's route.
 		'''
-		self.enforce_dust_limit = enforce_dust_limit
-		self.no_balance_failures = no_balance_failures
-		self.subtract_last_hop_upfront_fee_for_honest_payments = subtract_last_hop_upfront_fee_for_honest_payments
-		self.keep_receiver_upfront_fee = keep_receiver_upfront_fee
+		self.ln_model = ln_model
+		self.target_hops = target_hops
 		self.max_num_attempts_per_route_honest = max_num_attempts_per_route_honest
 		self.max_num_attempts_per_route_jamming = max_num_attempts_per_route_jamming
+		self.max_num_routes_honest = max_num_routes_honest
+		self.max_num_routes_jamming = len(self.target_hops) if max_num_routes_jamming is None else max_num_routes_jamming
+		self.enforce_dust_limit = enforce_dust_limit
+		self.subtract_last_hop_upfront_fee_for_honest_payments = subtract_last_hop_upfront_fee_for_honest_payments
+		self.num_runs_per_simulation = num_runs_per_simulation
+		self.jammer_must_route_via_nodes = jammer_must_route_via_nodes
+		self.max_target_hops_per_route = max_target_hops_per_route
 
-	def execute_schedule(self, schedule, ln_model):
-		self.ln_model = ln_model
-		now, num_sent, num_failed, num_reached_receiver = -1, 0, 0, 0
-		# we make the first attempt unconditionally
-		num_jam_attempts_this_batch = 1
-		while not schedule.schedule.empty():
-			new_time, event = schedule.get_event()
-			# we count every attempt into "num_sent"
-			num_attempts = 0
-			if new_time > now:
-				logger.info(f"Current time: {new_time}")
+	def run_simulation_series(self, schedule_generation_funciton, upfront_base_coeff_range, upfront_rate_coeff_range):
+		def run_simulation():
+			'''
+				Run a simulation.
+				A simulation includes multiple runs as specified in num_runs_per_simulation.
+				The results are averaged.
+			'''
+			tmp_num_sent, tmp_num_failed, tmp_num_reached_receiver = [], [], []
+			tmp_revenues = {node: [] for node in self.ln_model.channel_graph.nodes}
+			for i in range(self.num_runs_per_simulation):
+				logger.debug(f"Simulation {i + 1} of {self.num_runs_per_simulation}")
+				# we can't generate schedules out of cycle because they get depleted during execution
+				# (PriorityQueue does not support copying.)
+				schedule = schedule_generation_funciton()
+				num_sent, num_failed, num_reached_receiver = self.execute_schedule(schedule)
+				logger.debug(f"{num_sent} sent, {num_failed} failed, {num_reached_receiver} reached receiver")
+				tmp_num_sent.append(num_sent)
+				tmp_num_failed.append(num_failed)
+				tmp_num_reached_receiver.append(num_reached_receiver)
+				for node in self.ln_model.channel_graph.nodes:
+					upfront_revenue = self.ln_model.get_revenue(node, FeeType.UPFRONT)
+					success_revenue = self.ln_model.get_revenue(node, FeeType.SUCCESS)
+					tmp_revenues[node].append(upfront_revenue + success_revenue)
+			stats = {
+				"num_sent": mean(tmp_num_sent),
+				"num_failed": mean(tmp_num_failed),
+				"num_reached_receiver": mean(tmp_num_reached_receiver)
+			}
+			revenues = {}
+			for node in self.ln_model.channel_graph.nodes:
+				revenues[node] = mean(tmp_revenues[node])
+			return stats, revenues
+		simulation_series_results = []
+		for upfront_base_coeff in upfront_base_coeff_range:
+			for upfront_rate_coeff in upfront_rate_coeff_range:
+				logger.info(f"Starting simulation with upfront fee coefficients: base {upfront_base_coeff}, rate {upfront_rate_coeff}")
+				self.ln_model.set_upfront_fee_from_coeff_for_all(upfront_base_coeff, upfront_rate_coeff)
+				stats, revenues = run_simulation()
+				result = {
+					"upfront_base_coeff": upfront_base_coeff,
+					"upfront_rate_coeff": upfront_rate_coeff,
+					"stats": stats,
+					"revenues": revenues
+				}
+				simulation_series_results.append(result)
+		return simulation_series_results
+
+	def create_payment(self, route, amount, processing_delay, desired_result, enforce_dust_limit):
+		p, u_nodes, d_nodes = None, route[:-1], route[1:]
+		for u_node, d_node in reversed(list(zip(u_nodes, d_nodes))):
+			#logger.debug(f"Wrapping payment for fee policy from {u_node} to {d_node}")
+			chosen_cid, chosen_ch_dir = self.ln_model.lowest_fee_enabled_channel(u_node, d_node, amount, direction=(u_node < d_node))
+			#logger.debug(f"Chosen channel {chosen_cid}")
+			is_last_hop = p is None
+			p = Payment(
+				downstream_payment=p,
+				downstream_node=d_node,
+				upfront_fee_function=chosen_ch_dir.upfront_fee_function,
+				success_fee_function=chosen_ch_dir.success_fee_function,
+				desired_result=desired_result if is_last_hop else None,
+				processing_delay=processing_delay if is_last_hop else None,
+				receiver_amount=amount if is_last_hop else None)
+			if enforce_dust_limit:
+				assert(p.amount >= ProtocolParams["DUST_LIMIT"]), (p.amount, ProtocolParams["DUST_LIMIT"])
+		return p
+
+	def execute_schedule(self, schedule):
+		self.ln_model.reset()
+		self.now = -1
+		self.schedule = schedule
+		num_sent_total, num_failed_total, num_reached_receiver_total = 0, 0, 0
+		while not self.schedule.schedule.empty():
+			new_time, event = self.schedule.get_event()
+			if new_time > self.now:
+				logger.debug(f"Current time: {new_time}")
 				pass
-			now = new_time
-			if now > schedule.end_time:
-				logger.debug(f"Reached simulation end time: {schedule.end_time}, now is {now}")
+			if new_time > self.schedule.end_time:
 				break
+			self.now = new_time
 			logger.debug(f"Got event: {event}")
-			routes = self.ln_model.get_routes(event.sender, event.receiver, event.amount, event.must_route_via)
-			try:
-				route = next(routes)
-				logger.debug(f"Found route: {route}")
-			except StopIteration:
-				logger.debug("No route, skipping event")
-				continue
 			is_jam = event.desired_result is False
-			if is_jam or not self.subtract_last_hop_upfront_fee_for_honest_payments:
-				receiver_amount = event.amount
-			else:
-				logger.debug(f"Subtracting last-hop upfront fee from amount {event.amount}")
-				receiver_amount = self.get_adjusted_amount(event.amount, route)
-			logger.debug(f"Receiver will get {receiver_amount} in payment body")
-			p = self.ln_model.create_payment(
-				route,
-				receiver_amount,
-				event.processing_delay,
-				event.desired_result,
-				self.enforce_dust_limit)
-			while num_attempts < (1 if is_jam else self.max_num_attempts_per_route_honest):
-				num_attempts += 1
-				reached_receiver, erring_node, error_type = self.attempt_send_payment(p, event.sender, now)
-				if error_type is not None:
-					logger.debug(f"Payment failed after {num_attempts} attempts.")
-					num_failed += 1
-				if reached_receiver:
-					logger.debug(f"Payment reached receiver after {num_attempts} attempts")
-					num_reached_receiver += 1
-					break
-			num_sent += num_attempts
 			if is_jam:
-				if reached_receiver:
-					logger.debug("Jam reached receiver")
-					logger.debug(f"Putting jam {event} into schedule with resolution time {now}")
-					schedule.put_event(now, event)
+				def get_jammed_status():
+					return [(
+						hop,
+						self.ln_model.hop_is_jammed(hop, self.now),
+						self.ln_model.hop_num_slots_occupied(hop),
+						self.ln_model.hop_top_timestamps(hop)) for hop in self.target_hops]
+				if self.jammer_must_route_via_nodes:
+					max_num_routes = 1
+					need_new_route_generator = False
 				else:
-					logger.debug(f"Jam failed at {erring_node} with {error_type}")
-					next_batch_time = now + event.processing_delay
-					if error_type in (ErrorType.LOW_BALANCE, ErrorType.FAILED_DELIBERATELY):
-						if num_jam_attempts_this_batch < self.max_num_attempts_per_route_jamming:
-							logger.debug(f"Jam failed because of low balance or deliberate failure, continue this batch")
-							logger.debug(f"Putting jam {event} into schedule for this batch: resolution time {now}")
-							schedule.put_event(now, event)
-							num_jam_attempts_this_batch += 1
-						else:
-							logger.info(f"Coundn't fully jam target at time {now} after {num_jam_attempts_this_batch} attempts")
-							logger.debug("Moving on to the next batch")
-							logger.debug(f"Putting jam {event} into schedule for next batch: resolution time {next_batch_time}")
-							schedule.put_event(next_batch_time, event)
-							num_jam_attempts_this_batch = 1
-					elif error_type == ErrorType.NO_SLOTS:
-						sender, pre_receiver = route[0], route[-2]
-						if erring_node in (sender, pre_receiver):
-							logger.warning(f"Jammer's slots depleted at {erring_node}. Allocate more slots to jammer's channels!")
-							pass
-						else:
-							logger.info(f"Hops {event.must_route_via} fully jammed at time {now}")
-							pass
-						num_jam_attempts_this_batch = 1
-						schedule.put_event(next_batch_time, event)
-		now = schedule.end_time
-		logger.info(f"Schedule executed: {num_sent} sent, {num_failed} failed, {num_reached_receiver} reached receiver")
+					max_num_routes = self.max_num_routes_jamming
+					need_new_route_generator = True
+				target_hops_unjammed = self.target_hops.copy()
+				for num_route in range(max_num_routes):
+					logger.info(f"Trying route {num_route + 1} of {max_num_routes} ({len(target_hops_unjammed)} / {len(self.target_hops)} hops unjammed)")
+					if not target_hops_unjammed:
+						logger.debug(f"No unjammed target hops left, no need to try further routes")
+						break
+					if need_new_route_generator:
+						router = Router(self.ln_model, event.amount)
+					if self.jammer_must_route_via_nodes:
+						assert("JammerSender" in self.ln_model.routing_graph.predecessors(self.jammer_must_route_via_nodes[0]))
+						assert(self.jammer_must_route_via_nodes[-1] in self.ln_model.routing_graph.predecessors("JammerReceiver"))
+						route_from_sender = nx.shortest_path(self.ln_model.routing_graph, "JammerSender", self.jammer_must_route_via_nodes[0])
+						route_to_receiver = nx.shortest_path(self.ln_model.routing_graph, self.jammer_must_route_via_nodes[-1], "JammerReceiver")
+						route = route_from_sender + self.jammer_must_route_via_nodes[1:-1] + route_to_receiver
+					else:
+						routes = router.get_routes_via_target_hops(
+							event.sender,
+							event.receiver,
+							target_hops_unjammed,
+							min_target_hops_per_route=1,
+							max_target_hops_per_route=min(self.max_target_hops_per_route, len(target_hops_unjammed)))
+						try:
+							route = next(routes)
+							logger.info(f"Found route of length {len(route)}: {route}")
+						except StopIteration:
+							logger.warning(f"No route from {event.sender} to {event.receiver} via any of {target_hops_unjammed}")
+							break
+					num_sent, num_failed, num_reached_receiver, jammed_hop = self.send_jam_via_route(event, route)
+					num_sent_total += num_sent
+					num_failed_total += num_failed
+					num_reached_receiver_total += num_reached_receiver
+					logger.debug(f"Jammed hop {jammed_hop} from route {route}")
+					# exclude jammed hop from the router # we can't route through the jammed hop it anyway, no matter if it's among target hops or not
+					# the only exception is the jammer's own channels
+					if "JammerSender" not in jammed_hop and "JammerReceiver" not in jammed_hop and not self.jammer_must_route_via_nodes:
+						logger.debug(f"Removing {jammed_hop} from router")
+						router.remove_hop(jammed_hop)
+					if jammed_hop not in self.target_hops:
+						logger.debug(f"Newly jammed hop {jammed_hop} is not among target hops!")
+						logger.debug(f"Trying another route with the same unjammed target hops")
+						need_new_route_generator = False
+						continue
+					elif jammed_hop not in target_hops_unjammed:
+						logger.error(f"Newly jammed hop {jammed_hop} is already jammed! (something is wrong, it must have been excluded)")
+						exit()
+					else:
+						logger.debug(f"Removing {jammed_hop} from unjammed hops")
+						target_hops_unjammed.remove(jammed_hop)
+						need_new_route_generator = False
+				all_target_hops_are_really_jammed = all(self.ln_model.hop_is_jammed(hop, self.now) for hop in self.target_hops)
+				if all_target_hops_are_really_jammed:
+					logger.info(f"All target hops jammed at time {self.now}!")
+				elif target_hops_unjammed:
+					# Note: for hard-coded routes with a fixed number of slots, we actually jam the whole route at once
+					# But we can't confirm this because we only get a NO_SLOTS error from the first hop in the route
+					logger.warning(f"{len(target_hops_unjammed)} of {len(self.target_hops)} target hops MAY be unjammed after {num_route+1} routes at time {self.now}.")
+					logger.warning(f"Target hops jammed status: {get_jammed_status()}")
+				next_batch_time = self.now + event.processing_delay
+				logger.debug(f"Moving to the next batch: putting jam {event} into schedule for time {next_batch_time}")
+				self.schedule.put_event(next_batch_time, event)
+			else:
+				routes = self.ln_model.get_shortest_routes_via_nodes(event.sender, event.receiver, event.amount, event.must_route_via_nodes)
+				for num_route in range(self.max_num_routes_honest):
+					try:
+						route = next(routes)
+						logger.debug(f"Found route: {route}")
+					except StopIteration:
+						logger.debug("No route, skipping event")
+						break
+					num_sent, num_failed, num_reached_receiver = self.send_honest_payment_via_route(event, route)
+					num_sent_total += num_sent
+					num_failed_total += num_failed
+					num_reached_receiver_total += num_reached_receiver
+					if num_reached_receiver > 0:
+						logger.debug(f"Honest payment reached receiver at route {num_route + 1}, no need to try further routes")
+						break
+		if self.schedule.schedule.empty():
+			logger.info(f"Depleted the schedule with end time {self.schedule.end_time}, last event was at {self.now}")
+		else:
+			logger.info(f"Reached schedule end time {self.schedule.end_time}, last event was at {self.now}")
+		self.now = self.schedule.end_time
 		logger.debug(f"Finalizing in-flight HTLCs...")
-		self.finalize_in_flight_htlcs(now)
-		logger.info("Simulation complete.")
+		self.ln_model.finalize_in_flight_htlcs(self.now)
+		logger.info(f"Schedule executed: {num_sent_total} sent, {num_failed_total} failed, {num_reached_receiver_total} reached receiver")
+		return num_sent_total, num_failed_total, num_reached_receiver_total
+
+	def send_jam_via_route(self, event, route):
+		assert(event.desired_result is False)
+		logger.debug(f"Sending jam via {route}")
+		logger.debug(f"Receiver will get {event.amount} in payment body")
+		p = self.create_payment(route, event.amount, event.processing_delay, event.desired_result, self.enforce_dust_limit)
+		num_sent, num_failed, num_reached_receiver = 0, 0, 0
+		for attempt_num in range(self.max_num_attempts_per_route_jamming):
+			reached_receiver, last_node_reached, first_node_not_reached, error_type = self.ln_model.attempt_send_payment(
+				p,
+				event.sender,
+				self.now,
+				attempt_id=str(attempt_num))
+			assert(error_type is not None)
+			num_sent += 1
+			if error_type is not None:
+				num_failed += 1
+			if reached_receiver:
+				logger.debug(f"Jam reached receiver {last_node_reached} at attempt {attempt_num}")
+				num_reached_receiver += 1
+			else:
+				logger.debug(f"Jam failed at {last_node_reached}-{first_node_not_reached} with {error_type} at attempt {attempt_num}")
+				if error_type in (ErrorType.LOW_BALANCE, ErrorType.FAILED_DELIBERATELY):
+					logger.debug(f"Continue the batch at time {self.now}")
+				elif error_type == ErrorType.NO_SLOTS:
+					sender, pre_receiver = route[0], route[-2]
+					if last_node_reached in (sender, pre_receiver):
+						# FIXME: this check is incorrect for circular routes
+						#logger.warning(f"Slots depleted at {last_node_reached}-{first_node_not_reached}. Allocate more slots to jammer's channels?")
+						pass
+					else:
+						logger.debug(f"Route {route} jammed at time {self.now}")
+					break
+		if attempt_num == self.max_num_attempts_per_route_jamming and error_type != ErrorType.NO_SLOTS:
+			logger.warning(f"Coundn't jam route {route} at time {self.now} after {attempt_num} attempts")
+		return num_sent, num_failed, num_reached_receiver, (last_node_reached, first_node_not_reached)
+
+	def send_honest_payment_via_route(self, event, route):
+		assert(event.desired_result is True)
+		if not self.subtract_last_hop_upfront_fee_for_honest_payments:
+			receiver_amount = event.amount
+		else:
+			logger.debug(f"Subtracting last-hop upfront fee from amount {event.amount}")
+			receiver, pre_receiver = route[-1], route[-2]
+			direction = (pre_receiver < receiver)
+			chosen_cid, chosen_ch_dir = self.ln_model.lowest_fee_enabled_channel(receiver, pre_receiver, event.amount, direction)
+			receiver_amount = Simulator.body_for_amount(event.amount, chosen_ch_dir.upfront_fee_function)
+		logger.debug(f"Receiver will get {receiver_amount} in payment body")
+		p = self.create_payment(route, receiver_amount, event.processing_delay, event.desired_result, self.enforce_dust_limit)
+		num_sent, num_failed, num_reached_receiver = 0, 0, 0
+		for attempt_num in range(self.max_num_attempts_per_route_honest):
+			reached_receiver, last_node_reached, first_node_not_reached, error_type = self.ln_model.attempt_send_payment(
+				p,
+				event.sender,
+				self.now,
+				attempt_id=str(attempt_num))
+			num_sent += 1
+			if reached_receiver:
+				logger.debug(f"Payment reached receiver after {attempt_num} attempts")
+				num_reached_receiver += 1
+				break
+			elif error_type is not None:
+				logger.debug(f"Payment failed at {last_node_reached}-{first_node_not_reached} with {error_type} at attempt {attempt_num}")
+				num_failed += 1
 		return num_sent, num_failed, num_reached_receiver
 
-	def attempt_send_payment(self, payment, sender, now):
+	@staticmethod
+	def body_for_amount(target_amount, upfront_fee_function, precision=1, max_steps=50):
 		'''
-			Try sending a payment.
-			The route is encoded within the payment,
-			apart from the sender, which is provided as a separate argument.
+			Given target_amount and fee function, find amount such that:
+			amount + fee(amount) ~ target_amount
 		'''
-		logger.debug(f"{sender} sends payment {payment.id}")
-		logger.debug(f"{payment}")
-		erring_node, error_type, reached_receiver = None, None, False
-		# A temporary data structure to store HTLCs before the payment reaches the receiver
-		# If the payment fails at a routing node, we don't remember in-flight HTLCs.
-		tmp_cid_to_htlcs, hops = dict(), []
-		p, d_node = payment, sender
-		while p is not None:
-			u_node, d_node = d_node, p.downstream_node
-			hops.append((u_node, d_node))
-			# Choose a channel in the required direction
-			direction = (u_node < d_node)
-			chosen_cid, chosen_ch_dir = self.ln_model.lowest_fee_enabled_channel(u_node, d_node, p.amount, direction)
-			logger.debug(f"Routing through channel {chosen_cid} from {u_node} to {d_node}")
-
-			# Deliberately fail the payment with some probability
-			# (not used in experiments but useful for testing response to errors)
-			if random() < chosen_ch_dir.deliberately_fail_prob:
-				logger.info(f"{u_node} deliberately failed payment {payment.id}")
-				erring_node, error_type = u_node, chosen_ch_dir.spoofing_error_type
+		min_body, max_body, num_step = 0, target_amount, 0
+		while True:
+			num_step += 1
+			body = round((min_body + max_body) / 2)
+			fee = upfront_fee_function(body)
+			amount = body + fee
+			if abs(target_amount - amount) < precision or num_step > max_steps:
 				break
-
-			# Model balance failures randomly, depending on the amount and channel capacity
-			if not self.no_balance_failures:
-				# The channel must accommodate the amount plus the upfront fee
-				amount_plus_upfront_fee = p.amount + p.upfront_fee
-				prob_low_balance = self.ln_model.prob_balance_failure(u_node, d_node, chosen_cid, amount_plus_upfront_fee)
-				if random() < prob_low_balance:
-					logger.info(f"{u_node} failed payment {payment.id}: low balance (probability was {round(prob_low_balance, 8)})")
-					erring_node, error_type = u_node, ErrorType.LOW_BALANCE
-					break
-
-			# Check if there is a free slot
-			has_free_slot, resolution_time, released_htlc = chosen_ch_dir.ensure_free_slot(now)
-			if released_htlc is not None:
-				# Resolve the outdated HTLC we released to free a slot for the current payment
-				logger.debug(f"Released an HTLC from {u_node} to {d_node} with resolution time {resolution_time} (now is {now}): {released_htlc}")
-				self.apply_htlc(resolution_time, released_htlc, u_node, d_node, now)
-			if not has_free_slot:
-				# All slots are busy, and there are no outdated HTLCs that could be released
-				logger.info(f"{u_node} failed payment {payment.id}: no free slots")
-				erring_node, error_type = u_node, ErrorType.NO_SLOTS
-				break
-
-			# Account for upfront fees
-			self.ln_model.subtract_revenue(u_node, FeeType.UPFRONT, p.upfront_fee)
-			# If the next payment is None, it means we've reached the receiver
-			reached_receiver = p.downstream_payment is None
-			if not reached_receiver or self.keep_receiver_upfront_fee:
-				self.ln_model.add_revenue(d_node, FeeType.UPFRONT, p.upfront_fee)
-
-			# Construct an HTLC to be stored in a temporary dictionary until we know if receiver is reached
-			in_flight_htlc = InFlightHtlc(p.id, p.success_fee, p.desired_result)
-			logger.debug(f"Constructed HTLC: {in_flight_htlc}")
-			tmp_cid_to_htlcs[(u_node, d_node)] = chosen_cid, direction, now + p.processing_delay, in_flight_htlc
-
-			# Unwrap the next onion level for the next hop
-			p = p.downstream_payment
-
-		if reached_receiver:
-			logger.debug(f"Payment {payment.id} has reached the receiver")
-		if not reached_receiver:
-			logger.debug(f"Payment {payment.id} has failed at {erring_node} and has NOT reached the receiver")
-		logger.debug(f"Temporarily saved HTLCs: {tmp_cid_to_htlcs}")
-
-		# For each channel in the route, store HTLCs for the current payment
-		if reached_receiver:
-			if payment.desired_result is False:
-				erring_node, error_type = d_node, ErrorType.FAILED_DELIBERATELY
-			for u_node, d_node in hops:
-				if (u_node, d_node) in tmp_cid_to_htlcs:
-					chosen_cid, direction, resolution_time, in_flight_htlc = tmp_cid_to_htlcs[(u_node, d_node)]
-					logger.debug(f"Storing HTLC in channel {chosen_cid} from {u_node} to {d_node} to resolve at time {resolution_time}: {in_flight_htlc}")
-					ch_dir = self.ln_model.channel_graph.get_edge_data(u_node, d_node)[chosen_cid]["directions"][direction]
-					ch_dir.store_htlc(resolution_time, in_flight_htlc)
-
-		assert(reached_receiver or error_type is not None)
-		return reached_receiver, erring_node, error_type
-
-	def finalize_in_flight_htlcs(self, now):
-		'''
-			Apply all in-flight htlcs with timestamp < now.
-			This is done after the simulation is complete.
-		'''
-		# Note: we iterate through the edges of the directed routing graph,
-		# but we look up HTLC data in the corresponding undirected channel graph.
-		for (u_node, d_node) in self.ln_model.routing_graph.edges():
-			logger.debug(f"Resolving HTLCs from {u_node} to {d_node}")
-			channels_dict = self.ln_model.channel_graph.get_edge_data(u_node, d_node)
-			direction = (u_node < d_node)
-			for cid in channels_dict:
-				ch_dir = channels_dict[cid]["directions"][direction]
-				if ch_dir is None:
-					continue
-				while not ch_dir.slots.empty():
-					next_htlc_time = ch_dir.slots.queue[0][0]
-					if next_htlc_time > now:
-						logger.debug(f"No HTLCs to resolve up to now ({now})")
-						break
-					resolution_time, released_htlc = ch_dir.slots.get_nowait()
-					logger.debug(f"Released HTLC {released_htlc} with resolution time {next_htlc_time}")
-					self.apply_htlc(resolution_time, released_htlc, u_node, d_node, now)
-
-	def get_adjusted_amount(self, amount, route):
-		'''
-			Calculate the payment body, given what the receiver would receive and last hop (lowest) fees.
-		'''
-		# calculate the final receiver amount for a hop
-		# which means - subtracting last-hop upfront fee from the given amount
-		receiver, pre_receiver = route[-1], route[-2]
-		direction = (pre_receiver < receiver)
-		chosen_cid, chosen_ch_dir = self.ln_model.lowest_fee_enabled_channel(receiver, pre_receiver, amount, direction)
-		receiver_amount = body_for_amount(amount, chosen_ch_dir.upfront_fee_function)
-		return receiver_amount
-
-	def apply_htlc(self, resolution_time, htlc, u_node, d_node, now):
-		'''
-			Resolve an HTLC. If (and only if) its desired result is True,
-			pass success-case fee from the upstream node to the downstream node.
-		'''
-		assert(resolution_time <= now)  # must have been checked before popping
-		if htlc.desired_result is True:
-			logger.debug(f"Applying HTLC {htlc} from {u_node} to {d_node}")
-			self.ln_model.subtract_revenue(u_node, FeeType.SUCCESS, htlc.success_fee)
-			self.ln_model.add_revenue(d_node, FeeType.SUCCESS, htlc.success_fee)
+			if amount < target_amount:
+				min_body = body
+			else:
+				max_body = body
+		return body

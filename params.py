@@ -58,7 +58,11 @@ ProtocolParams = {
 	# It also ensures that a single penalty transaction can spend
 	# the entire commitment transaction, as calculated in BOLT #5.
 	# https://github.com/lightning/bolts/blob/master/02-peer-protocol.md#rationale-7
-	"NUM_SLOTS": 483
+	"NUM_SLOTS": 483,
+
+	# maximal route length is 20
+	# FIXME: is this the number of nodes or edges in a route?
+	"MAX_ROUTE_LENGTH": 20
 }
 
 

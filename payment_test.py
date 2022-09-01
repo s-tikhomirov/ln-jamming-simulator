@@ -98,12 +98,23 @@ def example_snapshot_json():
 
 @pytest.fixture
 def example_ln_model(example_snapshot_json):
-	return LNModel(example_snapshot_json, default_num_slots=2)
+	return LNModel(
+		example_snapshot_json,
+		default_num_slots=2,
+		no_balance_failures=True,
+		keep_receiver_upfront_fee=True)
 
 
 def test_route_payment_creation(example_ln_model):
 	route = ["Alice", "Bob", "Charlie", "Dave"]
-	p = example_ln_model.create_payment(
+	sim = Simulator(
+		example_ln_model,
+		target_hops=("Bob", "Charlie"),
+		max_num_attempts_per_route_honest=1,
+		max_num_attempts_per_route_jamming=1,
+		max_num_routes_honest=1,
+		max_num_routes_jamming=1,)
+	p = sim.create_payment(
 		route,
 		amount=100,
 		processing_delay=2,

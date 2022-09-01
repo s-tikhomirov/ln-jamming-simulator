@@ -1,5 +1,5 @@
 from channel import ChannelDirection
-from simulator import InFlightHtlc
+from lnmodel import InFlightHtlc
 import pytest
 
 verbose = False
@@ -41,32 +41,29 @@ def test_channel_direction(example_channel_direction, example_resolution_times, 
 	tup_0, tup_1, tup_2, tup_3 = example_in_flight_htlcs
 	t_0, t_1, t_2, t_3 = example_resolution_times
 	# Store htlc 0
-	has_slot, resolution_time, released_htlc = cd.ensure_free_slot(t_0)
-	assert(has_slot)
-	assert(released_htlc is None)
+	has_slot, released_htlcs = cd.ensure_free_slot(t_0)
+	assert(has_slot and not released_htlcs)
 	cd.store_htlc(t_0, tup_0)
 	# Queue is not full yet
 	assert(cd.slots.qsize() == 1)
 	assert(not cd.slots.full())
 	# Store htlc 1
-	has_slot, resolution_time, released_htlc = cd.ensure_free_slot(t_1)
-	assert(has_slot)
-	assert(released_htlc is None)
+	has_slot, released_htlcs = cd.ensure_free_slot(t_1)
+	assert(has_slot and not released_htlcs)
 	cd.store_htlc(t_1, tup_1)
 	# Now the queue is full
 	assert(cd.slots.qsize() == 2)
 	assert(cd.slots.full())
 	# Store htlc 2
-	has_slot, resolution_time, released_htlc = cd.ensure_free_slot(t_2)
+	has_slot, released_htlcs = cd.ensure_free_slot(t_2)
+	assert(has_slot and released_htlcs)
+	resolution_time, released_htlc = released_htlcs[0]
 	# We got a free slot by popping an outdated in-flight htlc
-	assert(has_slot)
-	assert(released_htlc is not None)
 	cd.store_htlc(t_2, tup_2)
 	# The queue is full again (popped htlc 1, pushed htlc 2)
 	assert(cd.slots.qsize() == 2)
 	assert(cd.slots.full())
 	# Store htlc 3
-	has_slot, resolution_time, released_htlc = cd.ensure_free_slot(t_3)
+	has_slot, released_htlcs = cd.ensure_free_slot(t_3)
+	assert(not has_slot and not released_htlcs)
 	# Queue is full, and we can't pop anything: can't store htlc 3
-	assert(not has_slot)
-	assert(released_htlc is None)

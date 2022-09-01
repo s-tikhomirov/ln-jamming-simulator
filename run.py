@@ -1,4 +1,3 @@
-from experiment import Experiment
 from params import FeeParams, ProtocolParams, PaymentFlowParams
 from lnmodel import LNModel, FeeType
 from simulator import Simulator
@@ -10,16 +9,18 @@ from random import seed
 import json
 import csv
 import sys
+import networkx as nx
 
 import logging
 logger = logging.getLogger(__name__)
 
 
-DEFAULT_UPFRONT_BASE_COEFF_RANGE = [0, 0.001, 0.002, 0.005, 0.01]
-DEFAULT_UPFRONT_RATE_COEFF_RANGE = [0, 0.1, 0.2, 0.5, 1]
+DEFAULT_UPFRONT_BASE_COEFF_RANGE = [0, 0.001, 0.002]
+DEFAULT_UPFRONT_RATE_COEFF_RANGE = [0, 0.1]
 
 ABCD_SNAPSHOT_FILENAME = "./snapshots/listchannels_abcd.json"
 WHEEL_SNAPSHOT_FILENAME = "./snapshots/listchannels_wheel.json"
+REAL_SNAPSHOT_FILENAME = "./snapshots/listchannels-2021-12-09.json"
 
 
 def main():
@@ -27,7 +28,7 @@ def main():
 	parser.add_argument(
 		"--scenario",
 		type=str,
-		choices={"abcd", "wheel", "wheel-short-routes", "wheel-long-routes"},
+		choices={"abcd", "wheel-hardcoded-route", "wheel", "wheel-long-routes", "real"},
 		help="LN graph JSON filename."
 	)
 	parser.add_argument(
@@ -68,9 +69,21 @@ def main():
 	)
 	parser.add_argument(
 		"--max_num_attempts_jamming",
-		default=100,
+		default=ProtocolParams["NUM_SLOTS"] + 10,
 		type=int,
 		help="Number of attempts per jam payment in case of balance or deliberate failures."
+	)
+	parser.add_argument(
+		"--max_num_routes_honest",
+		default=1,
+		type=int,
+		help="Number of different routes per honest payment."
+	)
+	parser.add_argument(
+		"--max_num_routes_jamming",
+		default=None,
+		type=int,
+		help="Number of different routes per jam. By default, we try all routes until all target hops are jammed."
 	)
 	parser.add_argument(
 		"--no_balance_failures",
@@ -127,45 +140,58 @@ def main():
 		logger.debug(f"Initializing randomness seed: {args.seed}")
 		seed(args.seed)
 
-	simulator = Simulator(
-		max_num_attempts_per_route_honest=args.max_num_attempts_honest,
-		max_num_attempts_per_route_jamming=args.max_num_attempts_jamming,
-		no_balance_failures=args.no_balance_failures,
-		enforce_dust_limit=True,
-		keep_receiver_upfront_fee=args.keep_receiver_upfront_fee)
+	def run_scenario(
+		snapshot_filename,
+		honest_senders=None,
+		honest_receivers=None,
+		target_node=None,
+		target_hops=None,
+		jammer_sends_to_nodes=None,
+		jammer_receives_from_nodes=None,
+		honest_must_route_via_nodes=[],
+		jammer_must_route_via_nodes=[],
+		max_target_hops_per_route=ProtocolParams["MAX_ROUTE_LENGTH"] - 2):
 
-	def get_target_hops(ln_model, strategy, target_node=None):
-		if strategy == "all":
-			target_hops = list(ln_model.routing_graph.edges(data=False))
-		elif strategy == "all_adjacent_to":
-			assert(target_node is not None)
+		with open(snapshot_filename, 'r') as snapshot_file:
+			snapshot_json = json.load(snapshot_file)
+		ln_model = LNModel(
+			snapshot_json,
+			args.default_num_slots,
+			args.no_balance_failures,
+			args.keep_receiver_upfront_fee)
+
+		# set honest senders and receivers
+		assert((honest_senders is None) == (honest_receivers is None))
+		if honest_senders is None and honest_receivers is None:
+			if target_node is None:
+				logger.critical("Honest senders / receivers are not specified, but target not is also not specified!")
+				exit()
+			target_node_neighbors = list(set(nx.all_neighbors(ln_model.routing_graph, target_node)))
+			logger.info(f"Setting honest senders to neighbors of {target_node}: {target_node_neighbors}")
+			honest_senders = target_node_neighbors
+			honest_receivers = target_node_neighbors
+			logger.info(f"Set {len(honest_senders)} honest senders: {honest_senders}")
+			logger.info(f"Set {len(honest_receivers)} honest senders: {honest_receivers}")
+
+		# set target hops
+		if target_hops is not None:
+			# if given, target hops override target node
+			pass
+		elif target_node is not None:
 			in_edges = list(ln_model.routing_graph.in_edges(target_node, data=False))
 			out_edges = list(ln_model.routing_graph.out_edges(target_node, data=False))
 			target_hops = in_edges + out_edges
 		else:
-			logger.error(f"Unknown target hop selection strategy: {strategy}")
-		logger.debug(f"Selected target hops: {target_hops}")
-		return target_hops
+			logger.critical(f"Neither target hops nor target nodes are specified!")
+			exit()
+		logger.info(f"Set {len(target_hops)} target hops: {target_hops}")
 
-	def run_scenario(
-		snapshot_filename,
-		honest_senders,
-		honest_receivers,
-		target_hops=None,
-		jammer_sends_to_nodes=None,
-		jammer_receives_from_nodes=None,
-		honest_must_route_via=[],
-		jammer_must_route_via=[]):
-		with open(snapshot_filename, 'r') as snapshot_file:
-			snapshot_json = json.load(snapshot_file)
-		ln_model = LNModel(snapshot_json, args.default_num_slots)
+		# open jammer's channels
 		assert((jammer_sends_to_nodes is None) == (jammer_receives_from_nodes is None))
 		jammer_opens_channels_to_all_targets = jammer_sends_to_nodes is None
-		if target_hops is None:
-			target_hops = get_target_hops(ln_model, strategy="all_adjacent_to", target_node="Hub")
-
+		jammer_num_slots_multiplier = len(target_hops) * (ProtocolParams["NUM_SLOTS"] + 1)
 		if jammer_opens_channels_to_all_targets:
-			jammer_num_slots_multiplier = 2 * len(target_hops)
+			logger.info(f"Jammer opens channels to all target hops: {target_hops}")
 			for (jammer_sends_to, jammer_receives_from) in target_hops:
 				ln_model.add_jammers_sending_channel(
 					node=jammer_sends_to,
@@ -174,41 +200,58 @@ def main():
 					node=jammer_receives_from,
 					num_slots_multiplier=jammer_num_slots_multiplier)
 		else:
+			logger.info(f"Jammer opens channels only to {jammer_sends_to_nodes}, {jammer_receives_from_nodes}")
 			ln_model.add_jammers_channels(
 				send_to_nodes=jammer_sends_to_nodes,
-				receive_from_nodes=jammer_receives_from_nodes)
-
-		def schedule_generation_function_honest():
-			return generate_honest_schedule(
-				senders_list=honest_senders,
-				receivers_list=honest_receivers,
-				duration=args.simulation_duration,
-				must_route_via=honest_must_route_via)
-
-		def schedule_generation_function_jamming():
-			return generate_jamming_schedule(
-				target_hops=target_hops,
-				duration=args.simulation_duration)
+				receive_from_nodes=jammer_receives_from_nodes,
+				num_slots_multiplier=jammer_num_slots_multiplier)
 
 		ln_model.set_fee_for_all(
 			FeeType.SUCCESS,
 			args.success_base_fee,
 			args.success_fee_rate)
 
-		experiment = Experiment(
+		simulator = Simulator(
 			ln_model,
-			simulator,
-			args.num_runs_per_simulation)
+			target_hops,
+			max_num_attempts_per_route_honest=args.max_num_attempts_honest,
+			max_num_attempts_per_route_jamming=args.max_num_attempts_jamming,
+			max_num_routes_honest=args.max_num_routes_honest,
+			num_runs_per_simulation=args.num_runs_per_simulation,
+			enforce_dust_limit=True,
+			jammer_must_route_via_nodes=jammer_must_route_via_nodes,
+			max_target_hops_per_route=max_target_hops_per_route)
 
-		results_honest, results_jamming = experiment.run_pair_of_simulations(
-			schedule_generation_function_honest,
+		logger.info("Starting jamming simulations")
+
+		def schedule_generation_function_jamming():
+			return generate_jamming_schedule(
+				target_hops=target_hops,
+				duration=args.simulation_duration)
+
+		results_jamming = simulator.run_simulation_series(
 			schedule_generation_function_jamming,
+			args.upfront_base_coeff_range,
+			args.upfront_rate_coeff_range)
+
+		logger.info("Starting honest simulations")
+
+		def schedule_generation_function_honest():
+			return generate_honest_schedule(
+				senders_list=honest_senders,
+				receivers_list=honest_receivers,
+				duration=args.simulation_duration,
+				must_route_via_nodes=honest_must_route_via_nodes)
+
+		results_honest = simulator.run_simulation_series(
+			schedule_generation_function_honest,
 			args.upfront_base_coeff_range,
 			args.upfront_rate_coeff_range)
 
 		results = {
 			"params": {
 				"scenario": args.scenario,
+				"num_target_hops": len(target_hops),
 				"simulation_duration": args.simulation_duration,
 				"num_runs_per_simulation": args.num_runs_per_simulation,
 				"success_base_fee": args.success_base_fee,
@@ -237,38 +280,41 @@ def main():
 		}
 		return results
 
+	def run_real_scenario():
+		target_node = "03c2d52cdcb5ddd40d62ba3c7197260b0f7b4dcc29ad64724c68426045919922f0"
+		results = run_scenario(
+			snapshot_filename=REAL_SNAPSHOT_FILENAME,
+			target_node=target_node,
+			honest_must_route_via_nodes=[target_node],
+			max_target_hops_per_route=2)
+		return results
+
 	if args.scenario == "abcd":
 		results = run_scenario(
 			snapshot_filename=ABCD_SNAPSHOT_FILENAME,
 			honest_senders=["Alice"],
 			honest_receivers=["Dave"],
 			target_hops=[("Bob", "Charlie")])
+	elif args.scenario == "wheel-hardcoded-route":
+		results = run_scenario(
+			snapshot_filename=WHEEL_SNAPSHOT_FILENAME,
+			honest_senders=["Alice", "Bob", "Charlie", "Dave"],
+			honest_receivers=["Alice", "Bob", "Charlie", "Dave"],
+			target_hops=[("Alice", "Hub"), ("Hub", "Bob"), ("Charlie", "Hub"), ("Hub", "Dave")],
+			jammer_sends_to_nodes=["Alice"],
+			jammer_receives_from_nodes=["Dave"],
+			honest_must_route_via_nodes=["Hub"],
+			jammer_must_route_via_nodes=["Alice", "Hub", "Bob", "Charlie", "Hub", "Dave"])
 	elif args.scenario == "wheel":
 		results = run_scenario(
 			snapshot_filename=WHEEL_SNAPSHOT_FILENAME,
-			honest_senders=["Alice", "Bob", "Charlie", "Dave"],
-			honest_receivers=["Alice", "Bob", "Charlie", "Dave"],
-			jammer_sends_to=["Alice"],
-			jammer_receives_from=["Dave"],
-			honest_must_route_via=["Hub"],
-			jammer_must_route_via=["Alice", "Hub", "Bob", "Charlie", "Hub", "Dave"])
-	elif args.scenario == "wheel-short-routes":
-		results = run_scenario(
-			snapshot_filename=WHEEL_SNAPSHOT_FILENAME,
-			honest_senders=["Alice", "Bob", "Charlie", "Dave"],
-			honest_receivers=["Alice", "Bob", "Charlie", "Dave"],
-			honest_must_route_via=["Hub"])
-	elif args.scenario == "wheel-long-routes":
+			target_node="Hub",
+			honest_must_route_via_nodes=["Hub"])
+	elif args.scenario == "real":
+		results = run_real_scenario()
+	else:
 		logger.error(f"Not yet properly implemented for scenario {args.scenario}!")
 		exit()
-		# TODO: implementing this requires iterative route building through target hops
-		results = run_scenario(
-			snapshot_filename=WHEEL_SNAPSHOT_FILENAME,
-			honest_senders=["Alice", "Bob", "Charlie", "Dave"],
-			honest_receivers=["Alice", "Bob", "Charlie", "Dave"],
-			honest_must_route_via=["Hub"],
-			jammer_sends_to_nodes=["Alice"],
-			jammer_receives_from_nodes=["Dave"])
 
 	end_timestamp = int(time())
 	running_time = end_timestamp - start_timestamp

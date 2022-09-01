@@ -18,7 +18,7 @@ class Event:
 		A planned payment stored in a Schedule.
 	'''
 
-	def __init__(self, sender, receiver, amount, processing_delay, desired_result, must_route_via=[]):
+	def __init__(self, sender, receiver, amount, processing_delay, desired_result, must_route_via_nodes=[]):
 		'''
 			- sender
 				The sender of the payment.
@@ -37,7 +37,7 @@ class Event:
 			- desired_result
 				True for honest payments, False for jams.
 
-			- must_route_via
+			- must_route_via_nodes
 				A tuple of (consecutive) nodes that the payment must be routed through.
 		'''
 		# ID is useful for seamless ordering inside the priority queue
@@ -47,10 +47,10 @@ class Event:
 		self.amount = amount
 		self.processing_delay = processing_delay
 		self.desired_result = desired_result
-		self.must_route_via = must_route_via
+		self.must_route_via_nodes = must_route_via_nodes
 
 	def __repr__(self):
-		s = str((self.sender, self.receiver, self.amount, self.processing_delay, self.desired_result, self.must_route_via))
+		s = str((self.sender, self.receiver, self.amount, self.processing_delay, self.desired_result, self.must_route_via_nodes))
 		return s
 
 	def __lt__(self, other):
@@ -83,7 +83,7 @@ class Schedule:
 		desired_result,
 		payment_processing_delay_function,
 		payment_generation_delay_function,
-		must_route_via=[]):
+		must_route_via_nodes=[]):
 		'''
 			- senders_list
 				Pick a sender uniformly from this list.
@@ -110,7 +110,7 @@ class Schedule:
 			# is decided on Payment construction stage later
 			amount = amount_function()
 			processing_delay = payment_processing_delay_function()
-			event = Event(sender, receiver, amount, processing_delay, desired_result, must_route_via)
+			event = Event(sender, receiver, amount, processing_delay, desired_result, must_route_via_nodes)
 			self.put_event(t, event)
 			t += payment_generation_delay_function()
 
@@ -147,7 +147,7 @@ class Schedule:
 		return s
 
 
-def generate_honest_schedule(senders_list, receivers_list, duration, must_route_via=[]):
+def generate_honest_schedule(senders_list, receivers_list, duration, must_route_via_nodes=[]):
 	schedule = Schedule(duration=duration)
 	schedule.populate(
 		senders_list=senders_list,
@@ -156,11 +156,11 @@ def generate_honest_schedule(senders_list, receivers_list, duration, must_route_
 		desired_result=True,
 		payment_processing_delay_function=honest_proccesing_delay_function,
 		payment_generation_delay_function=honest_generation_delay_function,
-		must_route_via=must_route_via)
+		must_route_via_nodes=must_route_via_nodes)
 	return schedule
 
 
-def generate_jamming_schedule(target_hops, duration):
+def generate_jamming_schedule(target_hops, duration, initial_jam_for_each_target_hop=False):
 	# sender and receiver are "JammerSender" and "JammerReceiver"
 	# generate a jamming schedule that assumes that the jammer connects
 	# to ALL target nodes (JammerSender->A and B->JammerReceiver)
@@ -168,13 +168,22 @@ def generate_jamming_schedule(target_hops, duration):
 	schedule = Schedule(duration=duration)
 	jam_amount = ProtocolParams["DUST_LIMIT"]
 	jam_delay = PaymentFlowParams["JAM_DELAY"]
-	for target_hop in target_hops:
+	if initial_jam_for_each_target_hop:
+		for target_hop in target_hops:
+			initial_jam = Event(
+				sender="JammerSender",
+				receiver="JammerReceiver",
+				amount=jam_amount,
+				processing_delay=jam_delay,
+				desired_result=False,
+				must_route_via_nodes=target_hop)
+			schedule.put_event(0, initial_jam)
+	else:
 		initial_jam = Event(
 			sender="JammerSender",
 			receiver="JammerReceiver",
 			amount=jam_amount,
 			processing_delay=jam_delay,
-			desired_result=False,
-			must_route_via=target_hop)
+			desired_result=False)
 		schedule.put_event(0, initial_jam)
 	return schedule

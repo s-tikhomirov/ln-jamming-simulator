@@ -1,0 +1,74 @@
+{
+   "channels": [
+      {
+         "source": "Alice",
+         "destination": "Bob",
+         "short_channel_id": "ABx0",
+         "satoshis": 1000000,
+         "active": true
+      },
+      {
+         "source": "Bob",
+         "destination": "Charlie",
+         "short_channel_id": "BCx0",
+         "satoshis": 1000000,
+         "active": true
+      },
+      {
+         "source": "Charlie",
+         "destination": "Dave",
+         "short_channel_id": "CDx0",
+         "satoshis": 1000000,
+         "active": true
+      },
+      {
+         "source": "Elon",
+         "destination": "Fred",
+         "short_channel_id": "EFx0",
+         "satoshis": 1000000,
+         "active": true
+      },
+      {
+         "source": "Sender",
+         "destination": "Alice",
+         "short_channel_id": "SAx0",
+         "satoshis": 1000000,
+         "active": true
+      },
+      {
+         "source": "Sender",
+         "destination": "Charlie",
+         "short_channel_id": "SCx0",
+         "satoshis": 1000000,
+         "active": true
+      },
+      {
+         "source": "Sender",
+         "destination": "Elon",
+         "short_channel_id": "SEx0",
+         "satoshis": 1000000,
+         "active": true
+      },
+      {
+         "source": "Bob",
+         "destination": "Receiver",
+         "short_channel_id": "BRx0",
+         "satoshis": 1000000,
+         "active": true
+      },
+      {
+         "source": "Dave",
+         "destination": "Receiver",
+         "short_channel_id": "DRx0",
+         "satoshis": 1000000,
+         "active": true
+      },
+      {
+         "source": "Fred",
+         "destination": "Receiver",
+         "short_channel_id": "FRx0",
+         "satoshis": 1000000,
+         "active": true
+      }
+   ]
+}
