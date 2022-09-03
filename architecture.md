@@ -169,18 +169,18 @@ We define batch as jams that are being send at the same time.
 Say, the jam delay is 7.
 We start the simulation at time 0 by sending a _batch_ of payments over multiple routes.
 We use each routes multiple times, until all target hops are jammed.
-When all target hops are jammed, or when no more jams can be jammed (i.e., there are no more routes), the jammer finishes the batch and pushed another event into the schedule.
+When all target hops are jammed, or when no more hops can be jammed (i.e., there are no more routes), the jammer finishes the batch and pushes another event into the schedule.
 This new event has all the same properties except for its execution time, which is 7 instead of 0.
-Repeating the cycle, the jammer pushed the even due at time 7, performs the batch, and pushes an event due for time 14, and so on.
+Repeating the cycle, the jammer pushes the event due at time 7, performs the batch, then pushes an event due for time 14, and so on.
 The process stops when the simulation end time is reached.
 
 Now consider a single batch.
 We pop an event from the schedule and iterate through routes.
 We send jams through a given route until it returns a "no slots" error.
-When this happens, we mark the newly jammed hop as jammed and exclude it from consideration when generating the next route in this batch.
+When this happens, we mark the newly jammed hop as jammed and exclude it from consideration when generating the next route for this batch.
 
-For jammer's route generation, we use a generalized method.
-We aim to touch as many yet unjammed target hops as possible with one route to make jamming more efficient.
+For the jammer's route generation, we use a generalized method.
+We aim to touch as many yet unjammed target hops as possible with each next route to make jamming more efficient.
 Routes may include different number of target hops (at least one).
 We start from a maximum such number, specified as a parameter, for example 10.
 We pick a subset of 10 unjammed target hops.
@@ -207,11 +207,14 @@ An alternative approach would be to filter out routes that have loops.
 However, as looped payments are allowed by the protocol (citation needed) and make jamming more effective, we use them in simulations.
 
 To recap, when constructing routes for the current jam batch, we iterate through the following nested loops:
-1. for the number N of target hops in route from some maximum (think 10) decreasing to 1;
+1. for the number N of target hops in each route from some maximum (think 10) decreasing to 1;
 2. for an N-sized subset of yet unjammed target hops;
-3. for a permutation of this subset - find a route that includes these hops in these order, and jam it.
+3. for a permutation of this subset;
+4. find a route that includes these hops in this order, and jam it;
+5. Exclude the newly jammed hop from the list of yet unjammed hops, and repeat.
 
 Even though the number of all permutations of all subsets of target hops is huge, we don't need to traverse them all.
 In fact, we only need to traverse about as many routes as there are target hops.
-After jamming another route, by the "no-slots" error message, we exclude one target hop from the list of unjammed hops.
+After jamming each route, we exclude one target hop from the list of unjammed hops.
 (Other hops along the route may be jammed at this point too, if they all share the same number of slots, but we can't be sure without getting an error message from them.)
+Therefore, the number of path-finding operations is roughly proportional to the number of target hops (think a few thousand for the most-connected node).
