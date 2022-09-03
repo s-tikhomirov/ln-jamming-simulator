@@ -91,6 +91,9 @@ class LNModel:
 			success_base_fee = cd["base_fee_millisatoshi"] / K if "base_fee_millisatoshi" in cd else None
 			success_fee_rate = cd["fee_per_millionth"] / M if "fee_per_millionth" in cd else None
 			self.add_edge(src, dst, capacity, cid, upfront_base_fee, upfront_fee_rate, success_base_fee, success_fee_rate, is_enabled)
+		logger.info(f"LN model created. \
+			Channel graph has {self.channel_graph.number_of_nodes()} nodes and {self.channel_graph.number_of_edges()} channels. \
+			Routing graph has {self.routing_graph.number_of_nodes()} nodes and {self.routing_graph.number_of_edges()} channels.")
 		self.reset_revenues_for_all()
 
 	def add_edge(
@@ -467,8 +470,8 @@ class LNModel:
 			# Check if there is a free slot
 			num_slots_needed_for_this_hop = len(tmp_hops_to_unstored_htlcs[(u_node, d_node)]) + 1
 			has_free_slot, released_htlcs = chosen_ch_dir.ensure_free_slot(now, num_slots_needed=num_slots_needed_for_this_hop)
-			#logger.debug(f"Has free slot? {has_free_slot}")
-			#logger.debug(f"Released {len(released_htlcs)} HTLCs trying to free a slot")
+			#logger.info(f"{(u_node, d_node)} has free slot? {has_free_slot}")
+			#logger.info(f"Released {len(released_htlcs)} HTLCs trying to free a slot")
 			for resolution_time, released_htlc in released_htlcs:
 				# Resolve the outdated HTLC we released to free a slot for the current payment
 				#logger.debug(f"Released an HTLC from {u_node} to {d_node} with resolution time {resolution_time} (now is {now}): {released_htlc}")

@@ -165,6 +165,7 @@ class Simulator:
 						self.ln_model.hop_is_jammed(hop, self.now),
 						self.ln_model.hop_num_slots_occupied(hop),
 						self.ln_model.hop_top_timestamps(hop)) for hop in self.target_hops]
+				logger.debug(f"Target hops jammed status: {get_jammed_status()}")
 				if self.jammer_must_route_via_nodes:
 					max_num_routes = 1
 					need_new_route_generator = False
@@ -173,12 +174,13 @@ class Simulator:
 					need_new_route_generator = True
 				target_hops_unjammed = self.target_hops.copy()
 				for num_route in range(max_num_routes):
-					logger.info(f"Trying route {num_route + 1} of {max_num_routes} ({len(target_hops_unjammed)} / {len(self.target_hops)} hops unjammed)")
+					logger.debug(f"Trying route {num_route + 1} of max {max_num_routes} ({len(target_hops_unjammed)} / {len(self.target_hops)} hops unjammed)")
+					logger.debug(f"Unjammed hops: {target_hops_unjammed}")
 					if not target_hops_unjammed:
 						logger.debug(f"No unjammed target hops left, no need to try further routes")
 						break
 					if need_new_route_generator:
-						router = Router(self.ln_model, event.amount)
+						router = Router(self.ln_model, event.amount, event.sender, event.receiver)
 					if self.jammer_must_route_via_nodes:
 						assert("JammerSender" in self.ln_model.routing_graph.predecessors(self.jammer_must_route_via_nodes[0]))
 						assert(self.jammer_must_route_via_nodes[-1] in self.ln_model.routing_graph.predecessors("JammerReceiver"))
@@ -187,16 +189,14 @@ class Simulator:
 						route = route_from_sender + self.jammer_must_route_via_nodes[1:-1] + route_to_receiver
 					else:
 						routes = router.get_routes_via_target_hops(
-							event.sender,
-							event.receiver,
 							target_hops_unjammed,
 							min_target_hops_per_route=1,
 							max_target_hops_per_route=min(self.max_target_hops_per_route, len(target_hops_unjammed)))
 						try:
 							route = next(routes)
-							logger.info(f"Found route of length {len(route)}: {route}")
+							logger.debug(f"Found route of length {len(route)}: {route}")
 						except StopIteration:
-							logger.warning(f"No route from {event.sender} to {event.receiver} via any of {target_hops_unjammed}")
+							logger.debug(f"No route from {event.sender} to {event.receiver} via any of {target_hops_unjammed}")
 							break
 					num_sent, num_failed, num_reached_receiver, jammed_hop = self.send_jam_via_route(event, route)
 					num_sent_total += num_sent
@@ -220,14 +220,15 @@ class Simulator:
 						logger.debug(f"Removing {jammed_hop} from unjammed hops")
 						target_hops_unjammed.remove(jammed_hop)
 						need_new_route_generator = False
+				# FIXME: we don't jam to the end here?
+				#logger.debug(f"Target hops jammed status: {get_jammed_status()}")
 				all_target_hops_are_really_jammed = all(self.ln_model.hop_is_jammed(hop, self.now) for hop in self.target_hops)
 				if all_target_hops_are_really_jammed:
-					logger.info(f"All target hops jammed at time {self.now}!")
+					logger.warning(f"All target hops jammed at time {self.now}!")
 				elif target_hops_unjammed:
 					# Note: for hard-coded routes with a fixed number of slots, we actually jam the whole route at once
 					# But we can't confirm this because we only get a NO_SLOTS error from the first hop in the route
 					logger.warning(f"{len(target_hops_unjammed)} of {len(self.target_hops)} target hops MAY be unjammed after {num_route+1} routes at time {self.now}.")
-					logger.warning(f"Target hops jammed status: {get_jammed_status()}")
 				next_batch_time = self.now + event.processing_delay
 				logger.debug(f"Moving to the next batch: putting jam {event} into schedule for time {next_batch_time}")
 				self.schedule.put_event(next_batch_time, event)

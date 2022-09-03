@@ -75,7 +75,7 @@ def main():
 	)
 	parser.add_argument(
 		"--max_num_routes_honest",
-		default=1,
+		default=10,
 		type=int,
 		help="Number of different routes per honest payment."
 	)
@@ -167,11 +167,14 @@ def main():
 				logger.critical("Honest senders / receivers are not specified, but target not is also not specified!")
 				exit()
 			target_node_neighbors = list(set(nx.all_neighbors(ln_model.routing_graph, target_node)))
-			logger.info(f"Setting honest senders to neighbors of {target_node}: {target_node_neighbors}")
+			logger.info(f"Setting honest senders to neighbors of {target_node}")
+			logger.debug(f"{target_node_neighbors}")
 			honest_senders = target_node_neighbors
 			honest_receivers = target_node_neighbors
-			logger.info(f"Set {len(honest_senders)} honest senders: {honest_senders}")
-			logger.info(f"Set {len(honest_receivers)} honest senders: {honest_receivers}")
+			logger.info(f"Set {len(honest_senders)} honest senders")
+			logger.debug(f"{honest_senders}")
+			logger.info(f"Set {len(honest_receivers)} honest senders")
+			logger.debug(f"{honest_receivers}")
 
 		# set target hops
 		if target_hops is not None:
@@ -184,14 +187,15 @@ def main():
 		else:
 			logger.critical(f"Neither target hops nor target nodes are specified!")
 			exit()
-		logger.info(f"Set {len(target_hops)} target hops: {target_hops}")
+		logger.info(f"Set {len(target_hops)} target hops")
+		logger.debug(f":{target_hops}")
 
 		# open jammer's channels
 		assert((jammer_sends_to_nodes is None) == (jammer_receives_from_nodes is None))
 		jammer_opens_channels_to_all_targets = jammer_sends_to_nodes is None
 		jammer_num_slots_multiplier = len(target_hops) * (ProtocolParams["NUM_SLOTS"] + 1)
 		if jammer_opens_channels_to_all_targets:
-			logger.info(f"Jammer opens channels to all target hops: {target_hops}")
+			logger.info(f"Jammer opens channels to all target hops")
 			for (jammer_sends_to, jammer_receives_from) in target_hops:
 				ln_model.add_jammers_sending_channel(
 					node=jammer_sends_to,
@@ -221,7 +225,7 @@ def main():
 			enforce_dust_limit=True,
 			jammer_must_route_via_nodes=jammer_must_route_via_nodes,
 			max_target_hops_per_route=max_target_hops_per_route)
-
+		#exit()
 		logger.info("Starting jamming simulations")
 
 		def schedule_generation_function_jamming():
@@ -281,12 +285,14 @@ def main():
 		return results
 
 	def run_real_scenario():
-		target_node = "03c2d52cdcb5ddd40d62ba3c7197260b0f7b4dcc29ad64724c68426045919922f0"
+		big_node = "02ad6fb8d693dc1e4569bcedefadf5f72a931ae027dc0f0c544b34c1c6f3b9a02b"
+		small_node = "03c2d52cdcb5ddd40d62ba3c7197260b0f7b4dcc29ad64724c68426045919922f0"
+		target_node = big_node
 		results = run_scenario(
 			snapshot_filename=REAL_SNAPSHOT_FILENAME,
 			target_node=target_node,
 			honest_must_route_via_nodes=[target_node],
-			max_target_hops_per_route=2)
+			max_target_hops_per_route=5)
 		return results
 
 	if args.scenario == "abcd":
@@ -308,6 +314,8 @@ def main():
 	elif args.scenario == "wheel":
 		results = run_scenario(
 			snapshot_filename=WHEEL_SNAPSHOT_FILENAME,
+			honest_senders=["Alice", "Charlie"],
+			honest_receivers=["Bob", "Dave"],
 			target_node="Hub",
 			honest_must_route_via_nodes=["Hub"])
 	elif args.scenario == "real":
