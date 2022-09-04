@@ -128,7 +128,7 @@ class Simulator:
 		p, u_nodes, d_nodes = None, route[:-1], route[1:]
 		for u_node, d_node in reversed(list(zip(u_nodes, d_nodes))):
 			#logger.debug(f"Wrapping payment for fee policy from {u_node} to {d_node}")
-			chosen_cid, chosen_ch_dir = self.ln_model.lowest_fee_enabled_channel(u_node, d_node, amount, direction=(u_node < d_node))
+			chosen_cid, chosen_ch_dir = self.ln_model.lowest_fee_enabled_channel(u_node, d_node, amount)
 			#logger.debug(f"Chosen channel {chosen_cid}")
 			is_last_hop = p is None
 			p = Payment(
@@ -148,7 +148,7 @@ class Simulator:
 		self.now = -1
 		self.schedule = schedule
 		num_sent_total, num_failed_total, num_reached_receiver_total = 0, 0, 0
-		while not self.schedule.schedule.empty():
+		while not self.schedule.is_empty():
 			new_time, event = self.schedule.get_event()
 			if new_time > self.now:
 				logger.debug(f"Current time: {new_time}")
@@ -164,7 +164,7 @@ class Simulator:
 						hop,
 						self.ln_model.hop_is_jammed(hop, self.now),
 						self.ln_model.hop_num_slots_occupied(hop),
-						self.ln_model.hop_top_timestamps(hop)) for hop in self.target_hops]
+						self.ln_model.hop_get_top_timestamps(hop)) for hop in self.target_hops]
 				logger.debug(f"Target hops jammed status: {get_jammed_status()}")
 				if self.jammer_must_route_via_nodes:
 					max_num_routes = 1
@@ -233,22 +233,29 @@ class Simulator:
 				logger.debug(f"Moving to the next batch: putting jam {event} into schedule for time {next_batch_time}")
 				self.schedule.put_event(next_batch_time, event)
 			else:
-				routes = self.ln_model.get_shortest_routes_via_nodes(event.sender, event.receiver, event.amount, event.must_route_via_nodes)
-				for num_route in range(self.max_num_routes_honest):
-					try:
-						route = next(routes)
-						logger.debug(f"Found route: {route}")
-					except StopIteration:
-						logger.debug("No route, skipping event")
-						break
+				if event.must_route_via_nodes:
+					route = [event.sender] + event.must_route_via_nodes + [event.receiver]
 					num_sent, num_failed, num_reached_receiver = self.send_honest_payment_via_route(event, route)
 					num_sent_total += num_sent
 					num_failed_total += num_failed
 					num_reached_receiver_total += num_reached_receiver
-					if num_reached_receiver > 0:
-						logger.debug(f"Honest payment reached receiver at route {num_route + 1}, no need to try further routes")
-						break
-		if self.schedule.schedule.empty():
+				else:
+					routes = self.ln_model.get_shortest_routes(event.sender, event.receiver, event.amount)
+					for num_route in range(self.max_num_routes_honest):
+						try:
+							route = next(routes)
+							logger.debug(f"Found route: {route}")
+						except StopIteration:
+							logger.debug("No route, skipping event")
+							break
+						num_sent, num_failed, num_reached_receiver = self.send_honest_payment_via_route(event, route)
+						num_sent_total += num_sent
+						num_failed_total += num_failed
+						num_reached_receiver_total += num_reached_receiver
+						if num_reached_receiver > 0:
+							logger.debug(f"Honest payment reached receiver at route {num_route + 1}, no need to try further routes")
+							break
+		if self.schedule.is_empty():
 			logger.info(f"Depleted the schedule with end time {self.schedule.end_time}, last event was at {self.now}")
 		else:
 			logger.info(f"Reached schedule end time {self.schedule.end_time}, last event was at {self.now}")
@@ -301,8 +308,7 @@ class Simulator:
 		else:
 			logger.debug(f"Subtracting last-hop upfront fee from amount {event.amount}")
 			receiver, pre_receiver = route[-1], route[-2]
-			direction = (pre_receiver < receiver)
-			chosen_cid, chosen_ch_dir = self.ln_model.lowest_fee_enabled_channel(receiver, pre_receiver, event.amount, direction)
+			chosen_cid, chosen_ch_dir = self.ln_model.lowest_fee_enabled_channel(receiver, pre_receiver, event.amount)
 			receiver_amount = Simulator.body_for_amount(event.amount, chosen_ch_dir.upfront_fee_function)
 		logger.debug(f"Receiver will get {receiver_amount} in payment body")
 		p = self.create_payment(route, receiver_amount, event.processing_delay, event.desired_result, self.enforce_dust_limit)

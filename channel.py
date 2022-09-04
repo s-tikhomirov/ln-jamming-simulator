@@ -34,18 +34,15 @@ class ChannelDirection:
 
 	def __init__(
 		self,
-		is_enabled,
 		num_slots,
-		upfront_base_fee,
-		upfront_fee_rate,
-		success_base_fee,
-		success_fee_rate,
+		upfront_base_fee=0,
+		upfront_fee_rate=0,
+		success_base_fee=0,
+		success_fee_rate=0,
 		deliberately_fail_prob=0,
-		spoofing_error_type=ErrorType.FAILED_DELIBERATELY):
+		spoofing_error_type=ErrorType.FAILED_DELIBERATELY,
+		enabled=True):
 		'''
-			- is_enabled
-				True if this ch_dir forwards payments, False if not.
-
 			- num_slots
 				The max size of a PriorityQueue of in-flight HTLCs.
 				The queue priority metric is HTLC resolution time.
@@ -68,8 +65,11 @@ class ChannelDirection:
 
 			- spoofing_error_type
 				The error type to return when deliberately failing a payment.
+
+			- enabled
+				True if this ch_dir forwards payments, False if not.
 		'''
-		self.is_enabled = is_enabled
+		self.enabled = enabled
 		self.set_fee(FeeType.UPFRONT, upfront_base_fee, upfront_fee_rate)
 		self.set_fee(FeeType.SUCCESS, success_base_fee, success_fee_rate)
 		# we remember num_slots in a separate variable:
@@ -80,6 +80,7 @@ class ChannelDirection:
 		self.spoofing_error_type = spoofing_error_type
 
 	def set_fee(self, fee_type, base_fee, fee_rate):
+		assert(fee_type in (FeeType.UPFRONT, FeeType.SUCCESS))
 		fee_function = partial(lambda a: generic_fee_function(base_fee, fee_rate, a))
 		if fee_type == FeeType.UPFRONT:
 			self.upfront_base_fee = base_fee
@@ -89,38 +90,43 @@ class ChannelDirection:
 			self.success_base_fee = base_fee
 			self.success_fee_rate = fee_rate
 			self.success_fee_function = fee_function
-		else:
-			logger.error(f"Unexpected fee type {fee_type}! Can't set fee.")
-			pass
 
-	def set_num_slots(self, num_slots, copy_existing_htlcs=False):
+	def reset_with_num_slots(self, num_slots):
 		# Initialize slots to a PriorityQueue of a given maxsize.
 		# (An existing queue cannot be re-sized.)
 		# Optionally, copy over all HTLCs from the old queue.
 		# TODO: check that the new queue is larger than the old one if copy_existing_htlcs.
-		old_slots = self.slots
 		self.max_num_slots = num_slots
-		self.slots = PriorityQueue(maxsize=num_slots)
-		if copy_existing_htlcs:
-			if old_slots.qsize() > num_slots:
-				logger.error(f"Can't copy {old_slots.qsize()} HTLCs into queue of size {num_slots}!")
-				pass
-			else:
-				while not old_slots.empty():
-					resolution_time, released_htlc = self.slots.get_nowait()
-					self.slots.put_nowait((resolution_time, released_htlc))
+		self.slots = PriorityQueue(maxsize=self.max_num_slots)
 
-	def is_jammed(self, current_timestamp):
-		return not self.is_enabled or self.slots.full() and self.slots.queue[0][0] > current_timestamp
+	def is_enabled(self):
+		return self.enabled
 
-	def num_slots_occupied(self):
+	def is_full(self):
+		return self.slots.full()
+
+	def is_empty(self):
+		return self.slots.empty()
+
+	def is_jammed(self, time):
+		return not self.is_enabled() or self.is_full() and self.slots.queue[0][0] > time
+
+	def get_max_num_slots(self):
+		return self.max_num_slots
+
+	def get_num_slots_occupied(self):
 		# Note: this doesn't reflect that some slots may be occupied by outdated HTLCs!
 		return self.slots.qsize()
 
-	def top_timestamp(self):
-		return self.slots.queue[0][0] if not self.slots.empty() else None
+	def get_top_timestamp(self):
+		return self.slots.queue[0][0] if not self.is_empty() else None
 
-	def ensure_free_slot(self, current_timestamp, num_slots_needed=1):
+	def get_total_fee(self, amount):
+		success_fee = self.success_fee_function(amount)
+		upfront_fee = self.upfront_fee_function(amount + success_fee)
+		return success_fee + upfront_fee
+
+	def ensure_free_slot(self, time, num_slots_needed=1):
 		# Ensure there is a free slot.
 		# If the queue is full, check the timestamp of the earliest in-flight HTLC.
 		# If it is in the past, pop the HTLC (so it can be resolved).
@@ -135,7 +141,7 @@ class ChannelDirection:
 			for _ in range(num_slots_to_release):
 				earliest_in_flight_timestamp = self.slots.queue[0][0]
 				# Non-strict: we do resolve HTLCs that expire exactly now
-				if earliest_in_flight_timestamp <= current_timestamp:
+				if earliest_in_flight_timestamp <= time:
 					resolution_time, released_htlc = self.slots.get_nowait()
 					released_htlcs.append((resolution_time, released_htlc))
 					# freed a slot by popping an outdated HTLC
@@ -146,21 +152,20 @@ class ChannelDirection:
 			if not success:
 				for resolution_time, released_htlc in released_htlcs:
 					self.store_htlc(resolution_time, released_htlc)
+				released_htlcs = []
 		return success, released_htlcs
 
 	def store_htlc(self, resolution_time, in_flight_htlc):
 		# Store an in-flight HTLC in the slots queue.
 		# The queue must not be full!
 		# (We must have called ensure_free_slot() earlier.)
-		if self.slots.full():
-			logger.error(f"Can't push HTLC {in_flight_htlc}: slots full!")
-			assert(not self.slots.full())
+		assert(not self.slots.full())
 		self.slots.put_nowait((resolution_time, in_flight_htlc))
 
-	def __repr__(self):
+	def __repr__(self):  # pragma: no cover
 		s = "\nChannelDirection with properties:"
-		s += "\nis enabled:	" + str(self.is_enabled)
-		s += "\nbusy slots:	" + str(self.slots.qsize())
-		s += "\nmax slots:	" + str(self.slots.maxsize)
-		s += "\nslots full?	" + str(self.slots.full())
+		s += "\nis enabled:	" + str(self.is_enabled())
+		s += "\nbusy slots:	" + str(self.get_num_slots_occupied())
+		s += "\nmax slots:	" + str(self.get_max_num_slots())
+		s += "\nslots full?	" + str(self.is_full())
 		return s

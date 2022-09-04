@@ -83,7 +83,7 @@ class Payment:
 		downstream_upfront_fee = 0 if downstream_payment is None else downstream_payment.upfront_fee
 		self.upfront_fee = upfront_fee_function(self.amount) + downstream_upfront_fee
 
-	def __repr__(self):
+	def __repr__(self):  # pragma: no cover
 		s = "\nPayment with amount: 	" + str(self.amount)
 		s += "\n  of which body:	" + str(self.body)
 		s += "\n  success-case fee:	" + str(self.success_fee)
