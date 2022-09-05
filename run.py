@@ -287,7 +287,7 @@ def main():
 	def run_real_scenario():
 		big_node = "02ad6fb8d693dc1e4569bcedefadf5f72a931ae027dc0f0c544b34c1c6f3b9a02b"
 		small_node = "03c2d52cdcb5ddd40d62ba3c7197260b0f7b4dcc29ad64724c68426045919922f0"
-		target_node = big_node
+		target_node = small_node
 		results = run_scenario(
 			snapshot_filename=REAL_SNAPSHOT_FILENAME,
 			target_node=target_node,

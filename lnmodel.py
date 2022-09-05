@@ -296,8 +296,9 @@ class LNModel:
 
 	def reset_with_num_slots(self, u_node, d_node, num_slots):
 		# Resize the slots queue to a num_slots.
-		# Note: by default, this erases existing in-flight HTLCs.
+		# Note: this erases existing in-flight HTLCs.
 		# (Which is OK as we use this to reset the graph between experiments.)
+		logger.debug(f"Resetting {u_node}-{d_node} with num slots = {num_slots}")
 		for ch_dir in self.get_ch_dirs((u_node, d_node)):
 			if ch_dir is not None:
 				ch_dir.reset_with_num_slots(num_slots)

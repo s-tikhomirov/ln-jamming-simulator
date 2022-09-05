@@ -26,11 +26,8 @@ def test_get_routes_via_target_hops_simple():
 	ln_model = get_ln_model(ROUTER_TEST_SNAPSHOT_FILENAME)
 	router = Router(ln_model, AMOUNT, "Sender", "Receiver")
 	target_hops = [("Alice", "Bob"), ("Charlie", "Dave"), ("Elon", "Fred")]
-	routes = router.get_routes_via_target_hops(
-		target_hops,
-		min_target_hops_per_route=1,
-		max_target_hops_per_route=len(target_hops))
-	routes_list = [r for r in routes]
+	router.update_route_generator(target_hops)
+	routes_list = [r for r in router.routes]
 	print(routes_list)
 	assert(("Sender", "Alice", "Bob", "Charlie", "Dave", "Receiver") in routes_list)
 	assert(("Sender", "Alice", "Bob", "Receiver") in routes_list)
@@ -62,11 +59,9 @@ def wheel_router(wheel_ln_model_with_jammers_channels):
 
 def test_routes_wheel(wheel_router):
 	target_hops = [("Hub", "Bob"), ("Alice", "Hub"), ("Charlie", "Hub"), ("Hub", "Dave")]
-	routes = wheel_router.get_routes_via_target_hops(
-		target_hops,
-		min_target_hops_per_route=1,
-		max_target_hops_per_route=len(target_hops))
-	routes_list = [r for r in routes]
+	wheel_router.update_route_generator(target_hops, max_route_length=8)
+	routes_list = [r for r in wheel_router.routes]
+	logger.debug(f"{routes_list}")
 	assert(routes_list[0] == ("JammerSender", "Alice", "Hub", "Bob", "Charlie", "Hub", "Dave", "JammerReceiver"))
 	logger.info(routes_list)
 
@@ -92,38 +87,27 @@ def test_pre_calculate_paths(wheel_router):
 def test_get_route_via_hops(wheel_router):
 	permutation1 = (("Alice", "Hub"), ("Hub", "Bob"))
 	full_route = ("JammerSender", "Alice", "Hub", "Bob", "Charlie", "Hub", "Dave", "JammerReceiver")
-	route = wheel_router.get_route_via_hops(permutation1, max_route_length=len(full_route))
+	wheel_router.update_route_generator(target_hops=permutation1, max_route_length=len(full_route))
+	route = wheel_router.get_route()
 	assert(route == full_route)
-	route = wheel_router.get_route_via_hops(permutation1, max_route_length=len(full_route) - 1)
-	assert(route is None)
 	permutation2 = (("Alice", "Hub"), ("Hub", "Dave"))
-	route = wheel_router.get_route_via_hops(permutation2)
+	wheel_router.update_route_generator(target_hops=permutation2, max_route_length=None)
+	route = wheel_router.get_route()
 	assert(route == ("JammerSender", "Alice", "Hub", "Dave", "JammerReceiver"))
-	permutation3 = (("Alice", "Hub"), ("Hub", "Dave"), ("Charlie", "Hub"))
-	route = wheel_router.get_route_via_hops(permutation3)
-	assert(route is None)
 
 
 def test_get_routes_via_target_hops(wheel_router):
 	target_hops = [("Alice", "Hub"), ("Hub", "Bob"), ("Charlie", "Hub"), ("Hub", "Dave")]
 	full_route = ("JammerSender", "Alice", "Hub", "Bob", "Charlie", "Hub", "Dave", "JammerReceiver")
 	short_route = ("JammerSender", "Alice", "Hub", "Dave", "JammerReceiver")
-	routes = wheel_router.get_routes_via_target_hops(
-		target_hops,
-		min_target_hops_per_route=len(target_hops),
-		max_target_hops_per_route=len(target_hops),
-		max_route_length=len(full_route))
-	route_list = [r for r in routes]
-	assert(route_list == [full_route])
-	routes = wheel_router.get_routes_via_target_hops(
-		target_hops,
-		min_target_hops_per_route=1,
-		max_target_hops_per_route=len(target_hops),
-		max_route_length=len(full_route))
-	route_list = [r for r in routes]
+	wheel_router.update_route_generator(target_hops, max_route_length=len(full_route))
+	route_list = [r for r in wheel_router.routes]
 	assert(len(route_list) == 2)
 	assert(full_route in route_list)
 	assert(short_route in route_list)
+	wheel_router.update_route_generator(target_hops, max_route_length=len(short_route))
+	route_list = [r for r in wheel_router.routes]
+	assert(route_list == [short_route])
 
 
 def test_is_hop_in_path():

@@ -67,7 +67,11 @@ class Simulator:
 		self.max_num_attempts_per_route_honest = max_num_attempts_per_route_honest
 		self.max_num_attempts_per_route_jamming = max_num_attempts_per_route_jamming
 		self.max_num_routes_honest = max_num_routes_honest
-		self.max_num_routes_jamming = len(self.target_hops) if max_num_routes_jamming is None else max_num_routes_jamming
+		# we may not finish jamming a hop due to roll-back of the last looped jam
+		# we can have at most as many unjammed slots as hops in the whole route
+		# we jam is separately if needed with no-repeated-hops-allowed route
+		max_default_routes_per_target_hop = 1 + ProtocolParams["MAX_ROUTE_LENGTH"]
+		self.max_num_routes_jamming = len(self.target_hops) * max_default_routes_per_target_hop if max_num_routes_jamming is None else max_num_routes_jamming
 		self.subtract_last_hop_upfront_fee_for_honest_payments = subtract_last_hop_upfront_fee_for_honest_payments
 		self.num_runs_per_simulation = num_runs_per_simulation
 		self.jammer_must_route_via_nodes = jammer_must_route_via_nodes
@@ -137,7 +141,10 @@ class Simulator:
 			logger.debug(f"Got event: {event}")
 			is_jam = event.desired_result is False
 			if is_jam:
-				self.handle_jam(event)
+				if self.jammer_must_route_via_nodes:
+					self.handle_jam_with_static_route(event)
+				else:
+					self.handle_jam_with_router(event)
 			else:
 				self.handle_honest_payment(event)
 		if self.schedule.is_empty():
@@ -150,40 +157,40 @@ class Simulator:
 		logger.info(f"Schedule executed: {self.num_sent_total} sent, {self.num_failed_total} failed, {self.num_reached_receiver_total} reached receiver")
 		return self.num_sent_total, self.num_failed_total, self.num_reached_receiver_total
 
-	def handle_jam(self, event):
-		if self.jammer_must_route_via_nodes:
-			max_num_routes = 1
-			need_new_route_generator = False
-		else:
-			max_num_routes = self.max_num_routes_jamming
-			need_new_route_generator = True
+	def handle_jam_with_static_route(self, event):
+		assert(self.ln_model.routing_graph.has_edge("JammerSender", self.jammer_must_route_via_nodes[0]))
+		assert(self.ln_model.routing_graph.has_edge(self.jammer_must_route_via_nodes[-1], "JammerReceiver"))
+		route_from_sender = nx.shortest_path(self.ln_model.routing_graph, "JammerSender", self.jammer_must_route_via_nodes[0])
+		route_to_receiver = nx.shortest_path(self.ln_model.routing_graph, self.jammer_must_route_via_nodes[-1], "JammerReceiver")
+		route = route_from_sender + self.jammer_must_route_via_nodes[1:-1] + route_to_receiver
+		num_sent, num_failed, num_reached_receiver, jammed_hop = self.send_jam_via_route(event, route)
+		self.num_sent_total += num_sent
+		self.num_failed_total += num_failed
+		self.num_reached_receiver_total += num_reached_receiver
+		logger.debug(f"Jammed hop {jammed_hop}")
+
+	def handle_jam_with_router(self, event):
+		def get_jammed_status():
+			return [(
+				hop,
+				self.ln_model.get_hop(*hop).is_jammed(hop[0] < hop[1], self.now),
+				self.ln_model.get_hop(*hop).get_num_slots_occupied(hop[0] < hop[1])) for hop in self.target_hops]
+		max_num_routes = self.max_num_routes_jamming
 		target_hops_unjammed = self.target_hops.copy()
+		router = Router(self.ln_model, event.amount, event.sender, event.receiver)
+		router.update_route_generator(target_hops_unjammed)  # , max_route_length=8)
 		for num_route in range(max_num_routes):
-			logger.debug(f"Trying route {num_route + 1} of max {max_num_routes} ({len(target_hops_unjammed)} / {len(self.target_hops)} hops unjammed)")
-			logger.debug(f"Unjammed hops: {target_hops_unjammed}")
+			logger.debug(f"Trying route {num_route + 1} of max {max_num_routes} ({len(target_hops_unjammed)} / {len(self.target_hops)} hops definitely unjammed)")
+			logger.debug(f"Definitely unjammed hops: {target_hops_unjammed}")
 			if not target_hops_unjammed:
 				logger.debug(f"No unjammed target hops left, no need to try further routes")
 				break
-			if need_new_route_generator:
-				# FIXME: remove max route length restriction!
-				router = Router(self.ln_model, event.amount, event.sender, event.receiver, max_route_length=8)
-			if self.jammer_must_route_via_nodes:
-				assert("JammerSender" in self.ln_model.routing_graph.predecessors(self.jammer_must_route_via_nodes[0]))
-				assert(self.jammer_must_route_via_nodes[-1] in self.ln_model.routing_graph.predecessors("JammerReceiver"))
-				route_from_sender = nx.shortest_path(self.ln_model.routing_graph, "JammerSender", self.jammer_must_route_via_nodes[0])
-				route_to_receiver = nx.shortest_path(self.ln_model.routing_graph, self.jammer_must_route_via_nodes[-1], "JammerReceiver")
-				route = route_from_sender + self.jammer_must_route_via_nodes[1:-1] + route_to_receiver
-			else:
-				routes = router.get_routes_via_target_hops(
-					target_hops_unjammed,
-					min_target_hops_per_route=1,
-					max_target_hops_per_route=min(self.max_target_hops_per_route, len(target_hops_unjammed)))
-				try:
-					route = next(routes)
-					logger.debug(f"Found route of length {len(route)}: {route}")
-				except StopIteration:
-					logger.debug(f"No route from {event.sender} to {event.receiver} via any of {target_hops_unjammed}")
-					break
+			try:
+				route = router.get_route()
+				logger.debug(f"Found route of length {len(route)}: {route}")
+			except StopIteration:
+				logger.debug(f"No route from {event.sender} to {event.receiver} via any of {target_hops_unjammed}")
+				break
 			num_sent, num_failed, num_reached_receiver, jammed_hop = self.send_jam_via_route(event, route)
 			self.num_sent_total += num_sent
 			self.num_failed_total += num_failed
@@ -193,33 +200,39 @@ class Simulator:
 			# the only exception is the jammer's own channels
 			assert("JammerSender" not in jammed_hop and "JammerReceiver" not in jammed_hop)
 			assert(jammed_hop in target_hops_unjammed or jammed_hop not in self.target_hops)
-			if not self.jammer_must_route_via_nodes:
-				logger.debug(f"Removing {jammed_hop} from router")
-				router.remove_hop(jammed_hop)
-			# FIXME: in looped routes, if a hop is jammed at the second loop, we mark it as jammed and roll back the payment
-			# however, the FIRST loop gets rolled back too! => one slot is left unjammed
-			# a simple solution is to prohibit circular routes - required modifications in router
-			# alternatively, track how many times each jammed hop appears in the route
-			# and "finally-jam" it with shorter routes afterwards
-			logger.debug(f"Removing {jammed_hop} from unjammed hops")
-			target_hops_unjammed.remove(jammed_hop)
-			need_new_route_generator = False
-		# FIXME: we don't jam to the end here?
-		def get_jammed_status():
-			return [(
-				hop,
-				self.ln_model.get_hop(*hop).is_jammed(hop[0] < hop[1], self.now),
-				self.ln_model.get_hop(*hop).get_num_slots_occupied(hop[0] < hop[1])) for hop in self.target_hops]
-		#logger.debug(f"Target hops jammed status: {get_jammed_status()}")
-		all_target_hops_are_really_jammed = all(self.ln_model.hop_is_jammed(hop, self.now) for hop in self.target_hops)
-		#logger.debug(f"Target hops REALLY jammed? {all_target_hops_are_really_jammed}")
-		#logger.debug(f"Target hops WE THINK are unjammed: {target_hops_unjammed}")
-		if all_target_hops_are_really_jammed:
-			logger.debug(f"All target hops jammed at time {self.now}")
-		elif target_hops_unjammed:
+			# only exclude the newly jammed hop from graph if it's REALLY jammed
+			if self.ln_model.hop_is_jammed(jammed_hop, self.now):
+				if not self.jammer_must_route_via_nodes:
+					logger.debug(f"Removing {jammed_hop} from router")
+					router.remove_hop(jammed_hop)
+				# FIXME: in looped routes, if a hop is jammed at the second loop, we mark it as jammed and roll back the payment
+				# however, the FIRST loop gets rolled back too! => one slot is left unjammed
+				# a simple solution is to prohibit circular routes - required modifications in router
+				# alternatively, track how many times each jammed hop appears in the route
+				# and "finally-jam" it with shorter routes afterwards
+				if jammed_hop in target_hops_unjammed:
+					logger.debug(f"Removing {jammed_hop} from unjammed hops {target_hops_unjammed}")
+					target_hops_unjammed.remove(jammed_hop)
+					router.update_route_generator(target_hops_unjammed)
+			# check if need to transit to no-repeated-hops mode
+			if router.allow_repeated_hops and not target_hops_unjammed:
+				all_target_hops_are_really_jammed = all(self.ln_model.hop_is_jammed(hop, self.now) for hop in self.target_hops)
+				if not all_target_hops_are_really_jammed:
+					logger.debug(f"Some target hops may be still unjammed due to roll-back of looped jams!")
+					logger.debug(f"Target hops REALLY jammed? {all_target_hops_are_really_jammed}")
+					logger.debug(f"Target hops WE THINK are unjammed: {target_hops_unjammed}")
+					target_hops_unjammed = [hop for hop in self.target_hops if not self.ln_model.hop_is_jammed(hop, self.now)]
+					logger.info(f"Jamming the last unjammed hops {target_hops_unjammed} with no-repeated-hops routes")
+					router.update_route_generator(target_hops_unjammed, allow_repeated_hops=False)
+				else:
+					logger.debug(f"All target hops jammed at time {self.now}")
+		#logger.info(f"Out of loop; num_route = {num_route}")
+		#logger.info(f"Target hops jammed status: {get_jammed_status()}")
+		target_hops_left_unjammed = [hop for hop in self.target_hops if not self.ln_model.hop_is_jammed(hop, self.now)]
+		if target_hops_left_unjammed:
 			# Note: for hard-coded routes with a fixed number of slots, we actually jam the whole route at once
 			# But we can't confirm this because we only get a NO_SLOTS error from the first hop in the route
-			logger.warning(f"{len(target_hops_unjammed)} of {len(self.target_hops)} target hops MAY be unjammed after {num_route+1} routes at time {self.now}.")
+			logger.warning(f"Couldn't jam hops {target_hops_left_unjammed} after {num_route+1} routes at time {self.now}.")
 		next_batch_time = self.now + event.processing_delay
 		logger.debug(f"Moving to the next batch: putting jam {event} into schedule for time {next_batch_time}")
 		self.schedule.put_event(next_batch_time, event)
