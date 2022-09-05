@@ -21,12 +21,6 @@ def get_ln_model(snapshot_file):
 	return ln_model
 
 
-def get_router(snapshot_file):
-	ln_model = get_ln_model(snapshot_file)
-	router = Router(ln_model, AMOUNT)
-	return router
-
-
 def test_get_routes_via_target_hops_simple():
 	# FIXME: change this test to use add_jammers_channels in fixture
 	ln_model = get_ln_model(ROUTER_TEST_SNAPSHOT_FILENAME)
@@ -169,9 +163,11 @@ def test_first_permutation_element_index_not_in_path():
 	# is the first to violate the order of permutation inside the route
 	assert(Router.first_permutation_element_index_not_in_path(((b, c), (a, b)), path) == 1)
 
+
 '''
 def test_routes_real():
-	router = get_router(ROUTER_REAL_SNAPSHOT_FILENAME)
+	ln_model = get_ln_model(ROUTER_REAL_SNAPSHOT_FILENAME)
+	router = Router(ln_model, AMOUNT)
 	target_node = "03abf6f44c355dec0d5aa155bdbdd6e0c8fefe318eff402de65c6eb2e1be55dc3e"
 	in_edges = list(router.ln_model.routing_graph.in_edges(target_node, data=False))
 	out_edges = list(router.ln_model.routing_graph.out_edges(target_node, data=False))

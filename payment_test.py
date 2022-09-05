@@ -118,8 +118,7 @@ def test_route_payment_creation(example_ln_model):
 		route,
 		amount=100,
 		processing_delay=2,
-		desired_result=True,
-		enforce_dust_limit=False)
+		desired_result=True)
 	dsp = p.downstream_payment
 	ddsp = dsp.downstream_payment
 	assert(p.amount == 130.5)

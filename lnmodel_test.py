@@ -6,8 +6,7 @@ import pytest
 a, b, c, cr, d = "Alice", "Bob", "Charlie", "Craig", "Dave"
 
 
-@pytest.fixture
-def example_snapshot_json():
+def get_example_snapshot_json():
 
 	# Channel ABx0 has both directions enabled.
 	channel_ABx0_right = {
@@ -119,6 +118,13 @@ def example_snapshot_json():
 	return graph_json_object
 
 
+def get_ln_model():
+	return LNModel(
+		get_example_snapshot_json(),
+		default_num_slots=2,
+		no_balance_failures=True)
+
+
 @pytest.fixture
 def example_amounts():
 	amounts = {
@@ -130,122 +136,98 @@ def example_amounts():
 	return amounts
 
 
-def test_get_channel_graph_from_json(example_snapshot_json):
-	ln_model = LNModel(
-		example_snapshot_json,
-		default_num_slots=2,
-		no_balance_failures=True)
+def test_get_channel_graph_from_json():
+	ln_model = get_ln_model()
 	g = ln_model.channel_graph
 	assert(all(n in g.nodes() for n in [a, b, c, d, cr]))
 
 	# Alice - Bob has one bi-directional channel
-	assert(a in g.neighbors(b))
-	ab_edge_data = g.get_edge_data(a, b)
-	assert(len(ab_edge_data) == 1 and "ABx0" in ab_edge_data)
-	for dirX in [dir0, dir1]:
-		assert(ab_edge_data["ABx0"]["directions"][dirX] is not None)
-		assert(ab_edge_data["ABx0"]["directions"][dirX].is_enabled)
+	assert(g.has_edge(a, b))
+	ab_hop = ln_model.get_hop(a, b)
+	assert(ab_hop.get_num_cids() == 1 and ab_hop.has_cid("ABx0"))
+	assert(ab_hop.get_channel("ABx0").is_enabled_in_both_directions())
 
 	# Bob - Charlie have three channels, one of them uni-directional
-	assert(b in g.neighbors(c))
-	bc_edge_data = g.get_edge_data(b, c)
-	assert(
-		len(bc_edge_data) == 3
-		and "BCx0" in bc_edge_data
-		and "BCx1" in bc_edge_data
-		and "BCx2" in bc_edge_data
-	)
-	for dirX in [dir0, dir1]:
-		assert(bc_edge_data["BCx0"]["directions"][dirX] is not None)
-		assert(bc_edge_data["BCx0"]["directions"][dirX].is_enabled)
-		assert(bc_edge_data["BCx1"]["directions"][dirX] is not None)
-		assert(bc_edge_data["BCx1"]["directions"][dirX].is_enabled)
-	assert(bc_edge_data["BCx2"]["directions"][dir1] is not None)
-	assert(bc_edge_data["BCx2"]["directions"][dir1].is_enabled)
-	assert(bc_edge_data["BCx2"]["directions"][dir0] is None)
+	assert(g.has_edge(b, c))
+	bc_hop = ln_model.get_hop(b, c)
+	assert(bc_hop.get_num_cids() == 3)
+	assert(bc_hop.has_cid("BCx0"))
+	assert(bc_hop.has_cid("BCx1"))
+	assert(bc_hop.has_cid("BCx2"))
+	assert(bc_hop.get_channel("BCx0").is_enabled_in_both_directions())
+	assert(bc_hop.get_channel("BCx1").is_enabled_in_both_directions())
+	assert(bc_hop.get_channel("BCx2").is_enabled_in_direction(dir1))
+	assert(not bc_hop.get_channel("BCx2").is_enabled_in_direction(dir0))
 
 	# Charlie - Dave have a bi-directional channel
 	# but direction Dave->Charlie is disabled
-	assert(c in g.neighbors(d))
-	cd_edge_data = g.get_edge_data(c, d)
-	assert(len(cd_edge_data) == 1 and "CDx0" in cd_edge_data)
-	assert(cd_edge_data["CDx0"]["directions"][dir0] is not None)
-	assert(cd_edge_data["CDx0"]["directions"][dir0].is_enabled)
-	# UPD: we don't consider disabled channels
-	assert(cd_edge_data["CDx0"]["directions"][dir1] is None)
-	#assert(not cd_edge_data["CDx0"]["directions"][dir1].is_enabled)
+	assert(g.has_edge(c, d))
+	cd_hop = ln_model.get_hop(c, d)
+	assert(cd_hop.get_num_cids() == 1 and cd_hop.has_cid("CDx0"))
+	assert(cd_hop.get_channel("CDx0").is_enabled_in_direction(dir0))
+	assert(not cd_hop.get_channel("CDx0").is_enabled_in_direction(dir1))
 
 	# We also have uni-dir channels Bob->Craig->Dave
 	# (to test alternative routes)
 	for x, y in ((b, cr), (cr, d)):
-		assert(x in g.neighbors(y))
-		xy_edge_data = g.get_edge_data(x, y)
-		assert(len(xy_edge_data) == 1)
-		xy_cid = list(xy_edge_data)[0]
-		assert(xy_edge_data[xy_cid]["directions"][dir0] is not None)
-		assert(xy_edge_data[xy_cid]["directions"][dir0].is_enabled)
-		assert(xy_edge_data[xy_cid]["directions"][dir1] is None)
+		assert(g.has_edge(x, y))
+		xy_hop = ln_model.get_hop(x, y)
+		assert(xy_hop.get_num_cids() == 1)
+		xy_cid = xy_hop.get_cids()[0]
+		xy_ch = xy_hop.get_channel(xy_cid)
+		assert(xy_ch.is_enabled_in_direction(dir0))
+		assert(not xy_ch.is_enabled_in_direction(dir1))
 
 
-def test_get_routing_graph_from_json(example_snapshot_json):
-	ln_model = LNModel(
-		example_snapshot_json,
-		default_num_slots=2,
-		no_balance_failures=True)
+def test_get_routing_graph_from_json():
+	ln_model = get_ln_model()
 	g = ln_model.routing_graph
 	assert(all(n in g.nodes() for n in [a, b, c, d, cr]))
 
 	# Alice - Bob
-	assert(a in g.predecessors(b))
-	ab_edge_data = g.get_edge_data(a, b)
-	assert(len(ab_edge_data) == 1 and "ABx0" in ab_edge_data)
+	assert(g.has_edge(a, b))
+	ab_edge = ln_model.get_routing_graph_edge_data(a, b)
+	assert(len(ab_edge) == 1 and "ABx0" in ab_edge)
 
 	# Bob - Alice
-	assert(b in g.predecessors(a))
-	ba_edge_data = g.get_edge_data(b, a)
-	assert(len(ba_edge_data) == 1 and "ABx0" in ba_edge_data)
+	assert(g.has_edge(b, a))
+	ba_edge = ln_model.get_routing_graph_edge_data(b, a)
+	assert(len(ba_edge) == 1 and "ABx0" in ba_edge)
 
 	# Bob - Charlie
-	assert(b in g.predecessors(c))
-	bc_edge_data = g.get_edge_data(b, c)
-	assert(
-		len(bc_edge_data) == 2
-		and "BCx0" in bc_edge_data
-		and "BCx1" in bc_edge_data
-	)
+	assert(g.has_edge(b, c))
+	bc_edge = ln_model.get_routing_graph_edge_data(b, c)
+	assert(len(bc_edge) == 2)
+	assert("BCx0" in bc_edge)
+	assert("BCx1" in bc_edge)
 
 	# Charlie - Bob
-	assert(c in g.predecessors(b))
-	cb_edge_data = g.get_edge_data(c, b)
-	assert(
-		len(cb_edge_data) == 3
-		and "BCx0" in cb_edge_data
-		and "BCx1" in cb_edge_data
-		and "BCx2" in cb_edge_data
-	)
+	assert(g.has_edge(c, b))
+	cb_edge = ln_model.get_routing_graph_edge_data(c, b)
+	assert(len(cb_edge) == 3)
+	assert("BCx0" in cb_edge)
+	assert("BCx1" in cb_edge)
+	assert("BCx2" in cb_edge)
 
 	# Charlie - Dave have a bi-directional channel
 	# but direction Dave->Charlie is disabled
-	assert(c in g.predecessors(d))
-	cd_edge_data = g.get_edge_data(c, d)
-	assert(len(cd_edge_data) == 1 and "CDx0" in cd_edge_data)
+	assert(g.has_edge(c, d))
+	cd_edge = ln_model.get_routing_graph_edge_data(c, d)
+	assert(len(cd_edge) == 1 and "CDx0" in cd_edge)
 
 	# we only parse active (enabled) channel directions into routing graph
 	# that's why we don't have Dave -> Charlie edge
-	assert(d not in g.predecessors(c))
+	assert(not g.has_edge(d, c))
 
 	# Bob->Craig->Dave (uni-directional)
 	for x, y in ((b, cr), (cr, d)):
-		assert(x in g.predecessors(y))
-		xy_edge_data = g.get_edge_data(x, y)
-		assert(len(xy_edge_data) == 1)
+		assert(g.has_edge(x, y))
+		xy_edge = ln_model.get_routing_graph_edge_data(x, y)
+		assert(len(xy_edge) == 1)
 
 
-def test_revenue(example_snapshot_json):
-	ln_model = LNModel(
-		example_snapshot_json,
-		default_num_slots=2,
-		no_balance_failures=True)
+def test_revenue():
+	ln_model = get_ln_model()
 	# all revenues must be zero initially
 	for n in ln_model.channel_graph.nodes():
 		assert(ln_model.get_revenue(n, FeeType.UPFRONT) == 0)
@@ -262,11 +244,8 @@ def test_revenue(example_snapshot_json):
 	assert(ln_model.get_revenue("Alice", FeeType.UPFRONT) == -20)
 
 
-def test_get_routing_graph_for_amount(example_snapshot_json, example_amounts):
-	ln_model = LNModel(
-		example_snapshot_json,
-		default_num_slots=2,
-		no_balance_failures=True)
+def test_get_routing_graph_for_amount(example_amounts):
+	ln_model = get_ln_model()
 	ln_g_filtered = ln_model.get_routing_graph_for_amount(example_amounts["medium"])
 	must_contain_cids = ["ABx0", "BCx0", "BCx2", "CDx0"]
 	must_not_contain_cids = ["BCx1", "BCrx0", "CrDx0"]
@@ -276,10 +255,7 @@ def test_get_routing_graph_for_amount(example_snapshot_json, example_amounts):
 	for cid in must_not_contain_cids:
 		assert(cid not in cids)
 	# now filter for a huge amount - will exclude everything
-	ln_model = LNModel(
-		example_snapshot_json,
-		default_num_slots=2,
-		no_balance_failures=True)
+	ln_model = get_ln_model()
 	ln_g_filtered = ln_model.get_routing_graph_for_amount(example_amounts["huge"])
 	must_not_contain_cids = ["ABx0", "BCx0", "BCx2", "CDx0", "BCx1", "BCrx0", "CrDx0"]
 	cids = [value[2] for value in ln_g_filtered.edges(keys=True)]
@@ -287,11 +263,8 @@ def test_get_routing_graph_for_amount(example_snapshot_json, example_amounts):
 		assert(cid not in cids)
 
 
-def test_get_routes(example_snapshot_json, example_amounts):
-	ln_model = LNModel(
-		example_snapshot_json,
-		default_num_slots=2,
-		no_balance_failures=True)
+def test_get_routes(example_amounts):
+	ln_model = get_ln_model()
 	# get routes from Alice to Dave for moderate amount
 	# there should be two: via Bob-Charlie and Bob-Craig
 	routes = ln_model.get_shortest_routes(a, d, example_amounts["small"])
@@ -323,11 +296,8 @@ def test_get_routes_via_nodes(example_ln_model, example_amounts):
 
 
 # test directionality: there must not be a route B <--- C for a big amount
-def test_directionality(example_snapshot_json, example_amounts):
-	ln_model = LNModel(
-		example_snapshot_json,
-		default_num_slots=2,
-		no_balance_failures=True)
+def test_directionality(example_amounts):
+	ln_model = get_ln_model()
 	# B-C could forward a big amount in the opposite direction ("left")
 	routes = ln_model.get_shortest_routes(b, c, example_amounts["big"])
 	routes_list = [p for p in routes]
@@ -339,43 +309,44 @@ def test_directionality(example_snapshot_json, example_amounts):
 
 
 # test disabled direction: there must not be a route C <--- D
-def test_disabled_channel_direction(example_snapshot_json, example_amounts):
-	ln_model = LNModel(
-		example_snapshot_json,
-		default_num_slots=2,
-		no_balance_failures=True)
+def test_disabled_channel_direction(example_amounts):
+	ln_model = get_ln_model()
 	# check that disabled direction doesn't work
 	routes = ln_model.get_shortest_routes(d, c, example_amounts["small"])
 	routes_list = [p for p in routes]
 	assert(len(routes_list) == 0)
 
 
-def test_set_fee(example_snapshot_json):
-	ln_model = LNModel(
-		example_snapshot_json,
-		default_num_slots=2,
-		no_balance_failures=True)
+def test_set_fee_for_all():
+	ln_model = get_ln_model()
+	ab_hop = ln_model.get_hop(a, b)
+	ch = ab_hop.get_channel("ABx0")
+	ch_dir = ch.get_chdir(direction=(a < b))
 	amount = 100
-	ch_dir = ln_model.channel_graph.get_edge_data(a, b)["ABx0"]["directions"][a < b]
 	assert(ch_dir.success_fee_function(amount) == 0)
-	ln_model.set_fee(a, b, FeeType.SUCCESS, 1, 0.02)
+	ln_model.set_fee_for_all(FeeType.SUCCESS, base=1, rate=0.02)
 	assert(ch_dir.success_fee_function(amount) == 3)
+	ln_model.set_upfront_fee_from_coeff_for_all(upfront_base_coeff=2, upfront_rate_coeff=3)
+	assert(ch_dir.upfront_fee_function(amount) == 2 + 0.06 * amount)
 
 
-def test_get_shortest_routes_wrong_nodes(example_snapshot_json):
-	ln_model = LNModel(
-		example_snapshot_json,
-		default_num_slots=2,
-		no_balance_failures=True)
+def test_get_shortest_routes_wrong_nodes():
+	ln_model = get_ln_model()
 	routes = ln_model.get_shortest_routes("Alice", "Zoe", 100)
 	routes_list = [p for p in routes]
 	assert(len(routes_list) == 0)
 
 
-def test_get_suitable_cid_ch_dirs_in_hop(example_snapshot_json):
-	ln_model = LNModel(
-		example_snapshot_json,
-		default_num_slots=2,
-		no_balance_failures=True)
-	cid_ch_dirs = ln_model.get_suitable_cid_ch_dirs_in_hop("Bob", "Charlie", 0)
-	assert(cid_ch_dirs)
+def test_get_cids_can_forward_by_fee():
+	ln_model = get_ln_model()
+	cids = ln_model.get_cids_can_forward_by_fee("Bob", "Charlie", 1)
+	assert(cids)
+	cids = ln_model.get_cids_can_forward_by_fee("Bob", "Charlie", 1000)
+	assert(not cids)
+
+
+def test_get_prob_balance_failure():
+	ln_model = get_ln_model()
+	# capacity of ABx0 is 100
+	prob_balance_failure = ln_model.get_prob_balance_failure("Alice", "Bob", "ABx0", 10)
+	assert(prob_balance_failure == 0.1)

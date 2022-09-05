@@ -36,7 +36,8 @@ class Schedule:
 		desired_result,
 		payment_processing_delay_function,
 		payment_generation_delay_function,
-		must_route_via_nodes=[]):
+		must_route_via_nodes=[],
+		enforce_dust_limit=False):
 		'''
 			- senders_list
 				Pick a sender uniformly from this list.
@@ -57,10 +58,10 @@ class Schedule:
 		while t <= self.end_time:
 			sender = choice(senders_list)
 			receiver = choice(receivers_list)
-			if sender != receiver:
+			amount = amount_function()
+			if sender != receiver and (amount >= ProtocolParams["DUST_LIMIT"] or not enforce_dust_limit):
 				# whether to exclude last-hop upfront fee from amount or not,
 				# is decided on Payment construction stage later
-				amount = amount_function()
 				processing_delay = payment_processing_delay_function()
 				event = Event(sender, receiver, amount, processing_delay, desired_result, must_route_via_nodes)
 				self.put_event(t, event)
@@ -121,15 +122,15 @@ class JammingSchedule(Schedule):
 	def __init__(self, duration=0):
 		Schedule.__init__(self, duration)
 
-	def populate(self, via_target_hops=[]):
+	def populate(self, via_target_hops=[], sender="JammerSender", receiver="JammerReceiver"):
 		# sender and receiver are "JammerSender" and "JammerReceiver"
 		# generate a jamming schedule that assumes that the jammer connects
 		# to ALL target nodes (JammerSender->A and B->JammerReceiver)
 		# for all directed target edges (A,B)
 		jam_amount = ProtocolParams["DUST_LIMIT"]
 		jam_delay = PaymentFlowParams["JAM_DELAY"]
-		jam_sender = "JammerSender"
-		jam_receiver = "JammerReceiver"
+		jam_sender = sender
+		jam_receiver = receiver
 		if via_target_hops:
 			for target_hop in via_target_hops:
 				initial_jam = Event(

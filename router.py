@@ -22,12 +22,6 @@ class Router:
 		self.paths_from_sender = nx.shortest_path(self.g, source=sender)
 		self.paths_to_receiver = nx.shortest_path(self.g, target=receiver)
 
-	def get_path_from_sender(self, node):
-		return self.paths_from_sender[node]
-
-	def get_path_from_receiver(self, node):
-		return self.paths_to_receiver[node]
-
 	@staticmethod
 	def is_hop_in_path(target_hop, path):
 		for hop in zip(path, path[1:]):
@@ -62,12 +56,8 @@ class Router:
 		if max_route_length is None:
 			max_route_length = self.max_route_length
 		for hop in target_hops:
-			if not nx.has_path(self.g, self.sender, hop[0]):
-				logger.error(f"Can't jam target hop {hop}: node {hop[0]} is unreachable from {self.sender}!")
-				exit()
-			if not nx.has_path(self.g, hop[1], self.receiver):
-				logger.error(f"Can't jam target hop {hop}: node {hop[1]} is unreachable towards {self.receiver}!")
-				exit()
+			assert(nx.has_path(self.g, self.sender, hop[0]))
+			assert(nx.has_path(self.g, hop[1], self.receiver))
 		found_routes = set()
 		target_hops_per_route = min(max_target_hops_per_route, len(target_hops))
 		while target_hops_per_route >= min_target_hops_per_route:
@@ -95,27 +85,16 @@ class Router:
 		if max_route_length is None:
 			max_route_length = self.max_route_length
 		logger.debug(f"Searching for route from {self.sender} to {self.receiver} via {hops_permutation}")
-		prev_d_node, skip_hops = None, 0
+		prev_d_node = None
 		for i, (u_node, d_node) in enumerate(hops_permutation):
-			if not self.g.has_edge(u_node, d_node):
-				return None
-			if skip_hops > 0:
-				skip_hops -= 1
-				continue
+			assert(self.g.has_edge(u_node, d_node))
 			if prev_d_node is None:
 				first_hop_first_node = hops_permutation[0][0]
 				route = self.paths_from_sender[first_hop_first_node].copy()
 				logger.debug(f"Initial route to {first_hop_first_node} is {route}")
 				assert(route[0] == self.sender and route[-1] == first_hop_first_node)
 			else:
-				j = Router.first_permutation_element_index_not_in_path(hops_permutation, route)
-				if j > i:
-					logger.debug(f"We are considering hop number {i}")
-					logger.debug(f"But the first hop in permutation that is NOT in route is {j}")
-					logger.debug(f"We may jump to index {j} right away!")
-					skip_hops = j - i
-					continue
-				elif not nx.has_path(self.g, prev_d_node, u_node):
+				if not nx.has_path(self.g, prev_d_node, u_node):
 					logger.debug(f"No path from {prev_d_node} to {u_node}")
 					return None
 				elif prev_d_node != u_node:

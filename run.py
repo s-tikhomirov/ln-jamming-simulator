@@ -1,7 +1,7 @@
 from params import FeeParams, ProtocolParams, PaymentFlowParams
 from lnmodel import LNModel, FeeType
 from simulator import Simulator
-from schedule import generate_honest_schedule, generate_jamming_schedule
+from schedule import HonestSchedule, JammingSchedule
 
 import argparse
 from time import time
@@ -222,16 +222,15 @@ def main():
 			max_num_attempts_per_route_jamming=args.max_num_attempts_jamming,
 			max_num_routes_honest=args.max_num_routes_honest,
 			num_runs_per_simulation=args.num_runs_per_simulation,
-			enforce_dust_limit=True,
 			jammer_must_route_via_nodes=jammer_must_route_via_nodes,
 			max_target_hops_per_route=max_target_hops_per_route)
-		#exit()
+
 		logger.info("Starting jamming simulations")
 
 		def schedule_generation_function_jamming():
-			return generate_jamming_schedule(
-				target_hops=target_hops,
-				duration=args.simulation_duration)
+			sch = JammingSchedule(duration=args.simulation_duration)
+			sch.populate(via_target_hops=target_hops)
+			return sch
 
 		results_jamming = simulator.run_simulation_series(
 			schedule_generation_function_jamming,
@@ -241,11 +240,12 @@ def main():
 		logger.info("Starting honest simulations")
 
 		def schedule_generation_function_honest():
-			return generate_honest_schedule(
+			sch = HonestSchedule(duration=args.simulation_duration)
+			sch.populate(
 				senders_list=honest_senders,
 				receivers_list=honest_receivers,
-				duration=args.simulation_duration,
 				must_route_via_nodes=honest_must_route_via_nodes)
+			return sch
 
 		results_honest = simulator.run_simulation_series(
 			schedule_generation_function_honest,
