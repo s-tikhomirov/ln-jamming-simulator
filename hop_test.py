@@ -1,6 +1,7 @@
 from hop import Hop
 from channel import Channel
 from chdir import ChannelDirection, dir0, dir1, FeeType
+from htlc import InFlightHtlc
 
 
 def test_hop_create():
@@ -25,3 +26,23 @@ def test_hop_create():
 	cids_by_fee = hop.get_cids_can_forward_by_fee(100, dir0)
 	assert(cids_by_fee == ["cid0", "cid1"])
 	assert(hop.get_channel("cid3") is None)
+
+
+def test_is_jammed():
+	hop = Hop()
+	ch = Channel(capacity=1000)
+	ch_dir_0 = ChannelDirection(num_slots=2)
+	ch.add_chdir(ch_dir_0, dir0)
+	hop.add_channel(ch, cid="cid0")
+	assert(not hop.is_jammed(dir0, time=0))
+	assert(hop.get_num_slots_occupied(dir0) == 0)
+	htlc_01 = InFlightHtlc(payment_id="pid1", success_fee=0, desired_result=True)
+	htlc_02 = InFlightHtlc(payment_id="pid2", success_fee=0, desired_result=True)
+	ch_dir_0.store_htlc(resolution_time=1, in_flight_htlc=htlc_01)
+	ch_dir_0.store_htlc(resolution_time=1, in_flight_htlc=htlc_02)
+	assert(hop.is_jammed(dir0, time=0))
+	assert(hop.get_num_slots_occupied(dir0) == 2)
+	assert(hop.get_jammed_status(dir0, time=0) == (True, 2))
+	assert(hop.get_jammed_status(dir1, time=0) == (True, 0))
+	# checking jammed status does NOT pop HTLCs!
+	assert(hop.get_jammed_status(dir0, time=1) == (False, 2))
