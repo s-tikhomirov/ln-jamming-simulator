@@ -161,11 +161,14 @@ class Simulator:
 		return self.num_sent_total, self.num_failed_total, self.num_reached_receiver_total
 
 	def handle_jam_with_static_route(self, event):
-		assert(self.ln_model.routing_graph.has_edge("JammerSender", self.jammer_must_route_via_nodes[0]))
-		assert(self.ln_model.routing_graph.has_edge(self.jammer_must_route_via_nodes[-1], "JammerReceiver"))
-		route_from_sender = nx.shortest_path(self.ln_model.routing_graph, "JammerSender", self.jammer_must_route_via_nodes[0])
-		route_to_receiver = nx.shortest_path(self.ln_model.routing_graph, self.jammer_must_route_via_nodes[-1], "JammerReceiver")
-		route = route_from_sender + self.jammer_must_route_via_nodes[1:-1] + route_to_receiver
+		rg = self.ln_model.routing_graph
+		must_nodes = self.jammer_must_route_via_nodes
+		assert(rg.has_edge("JammerSender", must_nodes[0]))
+		assert(all(rg.has_edge(hop[0], hop[1]) for hop in zip(must_nodes, must_nodes[1:])))
+		assert(rg.has_edge(must_nodes[-1], "JammerReceiver"))
+		route_from_sender = nx.shortest_path(rg, "JammerSender", must_nodes[0])
+		route_to_receiver = nx.shortest_path(rg, must_nodes[-1], "JammerReceiver")
+		route = route_from_sender + must_nodes[1:-1] + route_to_receiver
 		num_sent, num_failed, num_reached_receiver, jammed_hop = self.send_jam_via_route(event, route)
 		self.num_sent_total += num_sent
 		self.num_failed_total += num_failed

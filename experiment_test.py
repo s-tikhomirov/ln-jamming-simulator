@@ -101,21 +101,21 @@ def test_simulator_jamming_schedule(example_sim):
 	assert_jam_results_correctness(simulator, duration, results)
 
 
-def est_simulator_jamming_fixed_route(example_sim):
+def test_simulator_jamming_fixed_route(example_sim):
 	# FIXME: this doesn't pass
 	target_hops = [("Alice", "Hub"), ("Hub", "Dave")]
 	duration = 8
 
 	def schedule_generation_function_jamming():
 		sch = JammingSchedule(duration=duration)
-		sch.populate(target_hops)
+		sch.populate()
 		return sch
 	simulator = example_sim
 	simulator.target_hops = target_hops
 	simulator.jammer_must_route_via_nodes = ["Alice", "Hub", "Dave"]
 	simulator.ln_model.add_jammers_channels(
-		send_to_nodes=["Alice", "Hub"],
-		receive_from_nodes=["Dave", "Hub"],
+		send_to_nodes=["Alice"],
+		receive_from_nodes=["Dave"],
 		num_slots_multiplier=2)
 	results = simulator.run_simulation_series(
 		schedule_generation_function_jamming,

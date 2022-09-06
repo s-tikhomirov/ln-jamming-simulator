@@ -103,9 +103,9 @@ def test_generate_jamming_schedule():
 	assert(event.desired_result is False)
 
 
-def test_generate_jamming_schedule_via_target_hops():
+def test_generate_jamming_schedule_one_jam_per_each_or_hops():
 	j_sch = JammingSchedule(duration=0)
-	j_sch.populate(via_target_hops=(("Alice", "Bob"), ("Charlie", "Dave")))
+	j_sch.populate(one_jam_per_each_or_hops=(("Alice", "Bob"), ("Charlie", "Dave")))
 	assert(j_sch.get_size() == 2)
 	all_events = j_sch.get_all_events()
 	times = [elem[0] for elem in all_events]

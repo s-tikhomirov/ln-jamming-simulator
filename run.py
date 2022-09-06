@@ -229,7 +229,7 @@ def main():
 
 		def schedule_generation_function_jamming():
 			sch = JammingSchedule(duration=args.simulation_duration)
-			sch.populate(via_target_hops=target_hops)
+			sch.populate(one_jam_per_each_or_hops=target_hops)
 			return sch
 
 		results_jamming = simulator.run_simulation_series(

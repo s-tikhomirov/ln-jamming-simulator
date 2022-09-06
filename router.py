@@ -76,19 +76,15 @@ class Router:
 				#logger.debug(f"Generating routes via permutations of {target_hops_subset}...")
 				for hops_permutation in itertools.permutations(target_hops_subset):
 					#logger.debug(f"Considering permutation {hops_permutation}")
-					route = self.get_route_via_hops(hops_permutation)
+					route = self.get_shortest_route_via_hops(hops_permutation)
+					#logger.info(f"Found route {route}")
 					if route is not None:
-						if route not in found_routes:
+						if route in found_routes:
+							#logger.info(f"Route {route} already found")
+							continue
+						else:
 							found_routes.add(route)
 							yield route
-						else:
-							#logger.debug(f"Route {route} already found")
-							pass
-					else:
-						#logger.debug(f"No route for this permutation")
-						continue
-				#logger.debug(f"No routes for this target_hops_subset")
-				continue
 			target_hops_per_route -= 1
 
 	def is_suitable(self, route):
@@ -100,7 +96,7 @@ class Router:
 			return False
 		return True
 
-	def get_route_via_hops(self, hops_permutation):
+	def get_shortest_route_via_hops(self, hops_permutation):
 		# TODO: should we return one route, or yield multiple routes if possible via a given permutation?
 		#logger.debug(f"Searching for route from {self.sender} to {self.receiver} via {hops_permutation}")
 		prev_d_node = None
@@ -138,15 +134,6 @@ class Router:
 		return tuple(route)
 
 	@staticmethod
-	def has_repeated_node(route):
-		return len(route) > len(set(route))
-
-	@staticmethod
 	def has_repeated_hop(route):
 		hops = list(zip(route, route[1:]))
 		return len(hops) > len(set(hops))
-
-	@staticmethod
-	def is_in(hop, route):
-		hops_in_route = list(zip(route, route[1:]))
-		return hop in hops_in_route
