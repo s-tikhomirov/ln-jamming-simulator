@@ -1,5 +1,6 @@
-from lnmodel import LNModel, FeeType
+from lnmodel import LNModel, FeeType, ErrorType
 from channel import dir0, dir1
+from payment import Payment
 
 import pytest
 
@@ -350,3 +351,23 @@ def test_get_prob_balance_failure():
 	# capacity of ABx0 is 100
 	prob_balance_failure = ln_model.get_prob_balance_failure("Alice", "Bob", "ABx0", 10)
 	assert(prob_balance_failure == 0.1)
+
+
+def test_balance_failure():
+	ln_model = LNModel(
+		get_example_snapshot_json(),
+		default_num_slots=2,
+		no_balance_failures=False)
+	p_ab = Payment(
+		downstream_payment=None,
+		downstream_node="Bob",
+		upfront_fee_function=lambda a: 0,
+		success_fee_function=lambda a: 0,
+		desired_result=True,
+		processing_delay=1,
+		receiver_amount=100)
+	reached_receiver, last_node_reached, first_node_not_reached, error_type = ln_model.attempt_send_payment(p_ab, sender="Alice", now=0)
+	assert(not reached_receiver)
+	assert(last_node_reached == "Alice")
+	assert(first_node_not_reached == "Bob")
+	assert(error_type == ErrorType.LOW_BALANCE)
