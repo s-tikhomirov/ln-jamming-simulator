@@ -1,15 +1,12 @@
 from lnmodel import LNModel, FeeType
 from simulator import Simulator
-from schedule import Schedule
 from params import PaymentFlowParams, FeeParams
 
 from math import ceil
-from functools import partial
 import pytest
 import json
 
 from schedule import HonestSchedule, JammingSchedule
-from simulator import Simulator
 
 import logging
 logger = logging.getLogger(__name__)
