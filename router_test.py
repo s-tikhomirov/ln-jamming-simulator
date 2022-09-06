@@ -1,8 +1,8 @@
-from lnmodel import LNModel
-from router import Router
-
 import json
 import pytest
+
+from lnmodel import LNModel
+from router import Router
 
 import logging
 logger = logging.getLogger(__name__)
@@ -44,7 +44,7 @@ def wheel_ln_model_with_jammers_channels():
 	ln_model.add_jammers_channels(
 		send_to_nodes=["Alice"],
 		receive_from_nodes=["Dave"],
-		num_slots_multiplier=4)
+		num_slots=(ln_model.default_num_slots + 1) * 5)
 	return ln_model
 
 
@@ -157,34 +157,29 @@ def test_discart_route_with_repeated_hop(wheel_router):
 	assert(len(routes_list) == len(set(routes_list)))
 
 
+def test_shorten_ids():
+	route = ["aaaa", "bbbb"]
+	assert(Router.shorten_ids(route, length=2) == ["aa", "bb"])
+
+
 '''
 def test_routes_real():
 	ln_model = get_ln_model(ROUTER_REAL_SNAPSHOT_FILENAME)
-	router = Router(ln_model, AMOUNT)
+	node_bitrefill = "030c3f19d742ca294a55c00376b3b355c3c90d61c6b6b39554dbc7ac19b141c14f"
+	node_tippinme = "03c2abfa93eacec04721c019644584424aab2ba4dff3ac9bdab4e9c97007491dda"
+	sender, receiver = node_bitrefill, node_tippinme
+	router = Router(ln_model, AMOUNT, sender, receiver)
 	target_node = "03abf6f44c355dec0d5aa155bdbdd6e0c8fefe318eff402de65c6eb2e1be55dc3e"
 	in_edges = list(router.ln_model.routing_graph.in_edges(target_node, data=False))
 	out_edges = list(router.ln_model.routing_graph.out_edges(target_node, data=False))
-	n = 3
+	n = 4
+	max_route_length = 5
 	target_hops = in_edges[:n] + out_edges[:n]
-	print(len(target_hops))
-	sender = "030c3f19d742ca294a55c00376b3b355c3c90d61c6b6b39554dbc7ac19b141c14f"
-	receiver = "03c2abfa93eacec04721c019644584424aab2ba4dff3ac9bdab4e9c97007491dda"
-	g = router.g
-	assert(sender in g)
-	assert(receiver in g)
-	assert(target_node in g)
-	assert(target_hop[0] in g and target_hop[1] in g for target_hop in target_hops)
-	#return True
-	routes = router.get_routes_via_target_hops(
-		sender,
-		receiver,
-		target_hops,
-		min_target_hops_per_route=1,
-		max_target_hops_per_route=3)
-	routes_list = [r for r in routes]
-	logger.info(routes_list)
-	logger.info(f"{len(routes_list)} routes generated")
-	# 156 routes generated
-	# this test was written primarily to check what the compute time would be
-	# TODO: do we want to actually assert anything here?
+	logger.debug(f"Selected {len(target_hops)} target hops")
+	router.update_route_generator(target_hops, max_route_length=max_route_length)
+	routes_list = [r for r in router.routes]
+	assert(all(r[0] == sender and r[-1] == receiver for r in routes_list))
+	assert(len(r) <= max_route_length for r in routes_list)
+	logger.debug(f"Found {len(routes_list)} routes with length up to {max_route_length}")
+	logger.debug(f"{[Router.shorten_ids(r) for r in routes_list]}")
 '''

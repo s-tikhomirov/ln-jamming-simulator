@@ -1,7 +1,7 @@
-from params import ProtocolParams
-
 import networkx as nx
 import itertools
+
+from params import ProtocolParams
 
 import logging
 logger = logging.getLogger(__name__)
@@ -28,44 +28,19 @@ class Router:
 	def pre_calculate_paths(self, sender, receiver):
 		self.paths_from_sender = nx.shortest_path(self.g, source=sender)
 		self.paths_to_receiver = nx.shortest_path(self.g, target=receiver)
+		for hop in self.target_hops:
+			if not nx.has_path(self.g, self.sender, hop[0]):
+				self.paths_from_sender[hop[0]] = None
+			if not nx.has_path(self.g, hop[1], self.receiver):
+				self.paths_to_receiver[hop[1]] = None
 
 	def get_route(self):
 		return next(self.routes)
-
-	@staticmethod
-	def is_hop_in_path(target_hop, path):
-		for hop in zip(path, path[1:]):
-			if hop == target_hop:
-				return True
-		return False
-
-	@staticmethod
-	def is_permutation_in_path(permutation, path):
-		i = Router.first_permutation_element_index_not_in_path(permutation, path)
-		return i is None
-
-	def first_permutation_element_index_not_in_path(permutation, path):
-		if not permutation:
-			return None
-		current_hop, i = permutation[0], 0
-		for hop in zip(path, path[1:]):
-			if hop == current_hop:
-				if i == len(permutation) - 1:
-					#logger.debug(f"Last hop {hop} at position {i} is in path")
-					return None
-				else:
-					i += 1
-					current_hop = permutation[i]
-					#logger.debug(f"Current hop {hop} at position {i} is in path")
-		return i
 
 	def remove_hop(self, hop):
 		self.g.remove_edge(hop[0], hop[1])
 
 	def get_routes_via_target_hops(self, min_target_hops_per_route=1, max_target_hops_per_route=None):
-		for hop in self.target_hops:
-			assert(nx.has_path(self.g, self.sender, hop[0]))
-			assert(nx.has_path(self.g, hop[1], self.receiver))
 		found_routes = set()
 		target_hops_per_route = (
 			min(max_target_hops_per_route, len(self.target_hops))
@@ -104,6 +79,8 @@ class Router:
 			assert(self.g.has_edge(u_node, d_node))
 			if prev_d_node is None:
 				first_hop_first_node = hops_permutation[0][0]
+				if self.paths_from_sender[first_hop_first_node] is None:
+					return None
 				route = self.paths_from_sender[first_hop_first_node].copy()
 				#logger.debug(f"Initial route to {first_hop_first_node} is {route}")
 				assert(route[0] == self.sender and route[-1] == first_hop_first_node)
@@ -122,6 +99,8 @@ class Router:
 			if not self.is_suitable(route):
 				return None
 			prev_d_node = d_node
+		if self.paths_to_receiver[prev_d_node] is None:
+			return None
 		path_to_receiver = self.paths_to_receiver[prev_d_node]
 		#logger.debug(f"path to receiver: {path_to_receiver}")
 		#logger.debug(f"Appending {path_to_receiver[1:]}")
@@ -134,6 +113,46 @@ class Router:
 		return tuple(route)
 
 	@staticmethod
+	def get_hops(route):
+		return zip(route, route[1:])
+
+	@staticmethod
+	def first_permutation_element_index_not_in_path(permutation, route):
+		if not permutation:
+			return None
+		current_hop, i = permutation[0], 0
+		for route_hop in Router.get_hops(route):
+			if route_hop == current_hop:
+				if i == len(permutation) - 1:
+					#logger.debug(f"Last hop {route_hop} at position {i} is in route")
+					return None
+				else:
+					i += 1
+					current_hop = permutation[i]
+					#logger.debug(f"Current hop {route_hop} at position {i} is in route")
+		return i
+
+	@staticmethod
+	def is_permutation_in_path(permutation, route):
+		i = Router.first_permutation_element_index_not_in_path(permutation, route)
+		return i is None
+
+	@staticmethod
+	def is_hop_in_path(hop, route):
+		for route_hop in Router.get_hops(route):
+			if route_hop == hop:
+				return True
+		return False
+
+	@staticmethod
 	def has_repeated_hop(route):
 		hops = list(zip(route, route[1:]))
 		return len(hops) > len(set(hops))
+
+	@staticmethod
+	def num_hop_occurs_in_path(hop, route):
+		return sum(1 for route_hop in Router.get_hops(route) if route_hop == hop)
+
+	@staticmethod
+	def shorten_ids(route, length=6):
+		return [node[:length] for node in route]

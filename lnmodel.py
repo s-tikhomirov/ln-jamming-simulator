@@ -1,7 +1,6 @@
-from queue import PriorityQueue
 import networkx as nx
-from random import choice
 from random import random
+import collections
 
 from chdir import ChannelDirection, ErrorType, FeeType, dir0, dir1
 from channel import Channel
@@ -65,6 +64,7 @@ class LNModel:
 		# We only parse cid and capacity (it's relevant for routing).
 		# All other attributes (fee functions, revenues) are stored in the undirected channel graph.
 		self.routing_graph = nx.MultiDiGraph()
+		logger.info(f"Creating LN model...")
 		for cd in snapshot_json["channels"]:
 			src, dst, capacity, cid, enabled = cd["source"], cd["destination"], cd["satoshis"], cd["short_channel_id"], cd["active"]
 			upfront_base_fee = cd["base_fee_millisatoshi_upfront"] / K if "base_fee_millisatoshi_upfront" in cd else 0
@@ -88,15 +88,17 @@ class LNModel:
 		upfront_fee_rate=0,
 		success_base_fee=0,
 		success_fee_rate=0,
-		num_slots_multiplier=1):
+		num_slots=None):
 		if cid is None:
 			cid = src[:1] + dst[:1] + "x" + generate_id(length=4)
-		self.add_edge_to_channel_graph(src, dst, capacity, cid, upfront_base_fee, upfront_fee_rate, success_base_fee, success_fee_rate, num_slots_multiplier)
+		if num_slots is None:
+			num_slots = self.default_num_slots
+		self.add_edge_to_channel_graph(src, dst, capacity, cid, upfront_base_fee, upfront_fee_rate, success_base_fee, success_fee_rate, num_slots)
 		self.add_edge_to_routing_graph(src, dst, capacity, cid)
 
-	def add_edge_to_channel_graph(self, src, dst, capacity, cid, upfront_base_fee, upfront_fee_rate, success_base_fee, success_fee_rate, num_slots_multiplier):
+	def add_edge_to_channel_graph(self, src, dst, capacity, cid, upfront_base_fee, upfront_fee_rate, success_base_fee, success_fee_rate, num_slots):
 		chdir = ChannelDirection(
-			num_slots=num_slots_multiplier * self.default_num_slots,
+			num_slots=num_slots,
 			upfront_base_fee=upfront_base_fee,
 			upfront_fee_rate=upfront_fee_rate,
 			success_base_fee=success_base_fee,
@@ -117,38 +119,26 @@ class LNModel:
 			ch = hop.get_channel(cid)
 		direction = (src < dst)
 		ch.add_chdir(chdir, direction)
-		'''
-			if cid not in self.channel_graph.get_edge_data(src, dst):
-				self.channel_graph.add_edge(src, dst, cid, capacity=capacity, directions=[None, None])
-		ch = self.channel_graph[src][dst][cid]
-		# if we encounter the same cid in the snapshot, it must have the same capacity
-		assert(capacity == ch["capacity"])
-		direction = src < dst
-		# we shouldn't yet have populated this direction for this cid
-		assert(ch["directions"][direction] is None)
-		ch["directions"][direction] = cd
-		'''
 
 	def add_edge_to_routing_graph(self, src, dst, capacity, cid):
 		# TODO: do we need cid here?
-		logger.debug(f"Adding to routing graph {src} {dst} {cid}")
 		self.routing_graph.add_edge(src, dst, cid, capacity=capacity)
 
-	def add_jammers_sending_channel(self, node, num_slots_multiplier, capacity=1000000):
+	def add_jammers_sending_channel(self, node, num_slots, capacity=1000000):
 		if not ("JammerSender" in self.routing_graph and "JammerSender" in self.routing_graph.predecessors(node)):
 			logger.debug(f"Opening a channel from JammerSender to {node}")
-			self.add_edge(src="JammerSender", dst=node, capacity=capacity, num_slots_multiplier=num_slots_multiplier)
+			self.add_edge(src="JammerSender", dst=node, capacity=capacity, num_slots=num_slots)
 
-	def add_jammers_receiving_channel(self, node, num_slots_multiplier, capacity=1000000):
+	def add_jammers_receiving_channel(self, node, num_slots, capacity=1000000):
 		if (not ("JammerReceiver" in self.routing_graph and node in self.routing_graph.predecessors("JammerReceiver"))):
 			logger.debug(f"Opening a channel from {node} to JammerReceiver")
-			self.add_edge(src=node, dst="JammerReceiver", capacity=capacity, num_slots_multiplier=num_slots_multiplier)
+			self.add_edge(src=node, dst="JammerReceiver", capacity=capacity, num_slots=num_slots)
 
-	def add_jammers_channels(self, send_to_nodes, receive_from_nodes, num_slots_multiplier):
+	def add_jammers_channels(self, send_to_nodes, receive_from_nodes, num_slots):
 		for node in send_to_nodes:
-			self.add_jammers_sending_channel(node, num_slots_multiplier=num_slots_multiplier)
+			self.add_jammers_sending_channel(node, num_slots=num_slots)
 		for node in receive_from_nodes:
-			self.add_jammers_receiving_channel(node, num_slots_multiplier=num_slots_multiplier)
+			self.add_jammers_receiving_channel(node, num_slots=num_slots)
 
 	def add_revenue(self, node, fee_type, amount):
 		self.channel_graph.nodes[node][fee_type.value] += amount
@@ -205,72 +195,11 @@ class LNModel:
 				yield route
 				route = next(routes, None)
 
-	'''
-	def get_shortest_routes_via_nodes(self, sender, receiver, amount, must_route_via_nodes=[]):
-		# Get a route from sender to (router_1 - router_2 - receiver).
-		# In the jamming context, (router_1 - router_2) is the target hop.
-		# We assume that the (jammer-)receiver is directly connected to router_2.
-		# Although there may be multiple hops from sender to router_1.
-		route = None
-		is_route_via = (len(must_route_via_nodes) > 0)
-		if not is_route_via:
-			yield from self.get_shortest_routes(sender, receiver, amount)
-		else:
-			logger.debug(f"Finding route from {sender} to {receiver} via {must_route_via_nodes}")
-			routing_graph = self.get_routing_graph_for_amount(
-				amount=(1 + self.capacity_filtering_safety_margin) * amount)
-			not_in_routing_graph = not all([n in routing_graph for n in [sender, receiver] + list(must_route_via_nodes)])
-			if not_in_routing_graph:
-				logger.warning(f"Can't find route from {sender} to {receiver} via {must_route_via_nodes} nodes {not_in_routing_graph} are not in the routing graph")
-				yield from ()
-			router_first = must_route_via_nodes[0]
-			router_last = must_route_via_nodes[-1]
-			if not nx.has_path(routing_graph, sender, router_first):
-				logger.warning(f"No path from {sender} to {router_first}")
-				yield from ()
-			elif router_last not in routing_graph.predecessors(receiver):
-				logger.warning(f"No (big enough) channel from {router_last} to {receiver}")
-				logger.warning(f"Note: last router and receiver must be directly connected!")
-				exit()
-				yield from ()
-			else:
-				routes = nx.all_shortest_paths(routing_graph, sender, router_first)
-				route = next(routes, None)
-				#yield route
-				if route is not None:
-					if is_route_via:
-						route.extend(must_route_via_nodes[1:])
-						route.append(receiver)
-					yield route
-				#route = next(routes, None)
-	'''
-
 	def get_cheapest_cid_in_hop(self, u_node, d_node, amount):
 		# TODO: think about the logic of jamming vs choosing cheapest channel
 		# what happens after the cheapest channel is jammed?
 		hop = self.get_hop(u_node, d_node)
 		return hop.get_cheapest_cid(amount, direction=(u_node < d_node))
-
-	'''
-	def get_suitable_cid_ch_dirs_in_hop(self, u_node, d_node, amount):
-		channels_dict = self.channel_graph.get_edge_data(u_node, d_node)
-		assert(channels_dict is not None), (u_node, d_node)
-		direction = u_node < d_node
-		return [
-			(cid, ch["directions"][direction]) for cid, ch in channels_dict.items()
-			if (
-				ch["directions"][direction] is not None
-				and ch["directions"][direction].is_enabled()
-				and ch["capacity"] >= amount + ch["directions"][direction].upfront_fee_function(amount))]
-
-	def lowest_fee_enabled_channel(self, u_node, d_node, amount):
-		suitable_cid_ch_dirs = self.get_suitable_cid_ch_dirs_in_hop(u_node, d_node, amount)
-		sorted_suitable_cid_ch_dirs = sorted(
-			suitable_cid_ch_dirs,
-			key=lambda cid_ch_dir: cid_ch_dir[1].get_total_fee(amount))
-		chosen_cid, ch_dir = sorted_suitable_cid_ch_dirs[0]
-		return chosen_cid, ch_dir
-	'''
 
 	def get_prob_balance_failure(self, u_node, d_node, cid, amount):
 		channels_dict = self.get_routing_graph_edge_data(u_node, d_node)
@@ -302,15 +231,6 @@ class LNModel:
 		for ch_dir in self.get_ch_dirs((u_node, d_node)):
 			if ch_dir is not None:
 				ch_dir.reset_with_num_slots(num_slots)
-	'''
-	def get_only_ch_dir(self, u_node, d_node):
-		ch_dict = self.channel_graph.get_edge_data(u_node, d_node)
-		direction = (u_node < d_node)
-		# assume there is only one channel in this hop
-		assert(len(ch_dict.keys()) == 1)
-		ch_dir = next(iter(ch_dict.values()))["directions"][direction]
-		return ch_dir
-	'''
 
 	def finalize_in_flight_htlcs(self, now):
 		'''
@@ -378,12 +298,10 @@ class LNModel:
 		'''
 		payment_attempt_id = payment.id + "-" + attempt_id
 		logger.debug(f"{sender} makes payment attempt {payment_attempt_id}")
-		#logger.debug(f"{payment}")
 		reached_receiver, error_type = False, None
 		last_node_reached, first_node_not_reached = sender, payment.downstream_node
 		# A temporary data structure to store HTLCs before the payment reaches the receiver
 		# If the payment fails at a routing node, we don't remember in-flight HTLCs.
-		import collections
 		tmp_hops_to_unstored_htlcs, hops = collections.defaultdict(list), set()
 		p, d_node = payment, sender
 		while p is not None:
@@ -415,8 +333,6 @@ class LNModel:
 			# Check if there is a free slot
 			num_slots_needed_for_this_hop = len(tmp_hops_to_unstored_htlcs[(u_node, d_node)]) + 1
 			has_free_slot, released_htlcs = chosen_ch_dir.ensure_free_slot(now, num_slots_needed=num_slots_needed_for_this_hop)
-			#logger.info(f"{(u_node, d_node)} has free slot? {has_free_slot}")
-			#logger.info(f"Released {len(released_htlcs)} HTLCs trying to free a slot")
 			for resolution_time, released_htlc in released_htlcs:
 				# Resolve the outdated HTLC we released to free a slot for the current payment
 				#logger.debug(f"Released an HTLC from {u_node} to {d_node} with resolution time {resolution_time} (now is {now}): {released_htlc}")
@@ -436,8 +352,6 @@ class LNModel:
 
 			# Construct an HTLC to be stored in a temporary dictionary until we know if receiver is reached
 			in_flight_htlc = InFlightHtlc(payment_attempt_id, p.success_fee, p.desired_result)
-			#logger.debug(f"Constructed HTLC: {in_flight_htlc}")
-			# Choose a channel in the required direction
 			direction = (u_node < d_node)
 			tmp_hops_to_unstored_htlcs[(u_node, d_node)].append((chosen_cid, direction, now + p.processing_delay, in_flight_htlc))
 

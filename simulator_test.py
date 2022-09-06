@@ -3,10 +3,10 @@ import json
 
 from simulator import Simulator
 from event import Event
-from schedule import Schedule, HonestSchedule, JammingSchedule
+from schedule import Schedule
 from lnmodel import LNModel, FeeType
 from chdir import ErrorType
-from params import honest_amount_function, honest_proccesing_delay_function, honest_generation_delay_function, ProtocolParams
+from params import honest_amount_function, honest_proccesing_delay_function, honest_generation_delay_function
 
 import logging
 logger = logging.getLogger(__name__)
@@ -16,11 +16,13 @@ TEST_SNAPSHOT_FILENAME = "./snapshots/listchannels_test.json"
 # We renamed Bob to Mary to test that everything works if route is not alphabetically ordered.
 # (We kept b_ variable names though.)
 
+DEFAULT_NUM_SLOTS = 2
+
 
 def get_example_ln_model():
 	with open(TEST_SNAPSHOT_FILENAME, 'r') as snapshot_file:
 		snapshot_json = json.load(snapshot_file)
-	return LNModel(snapshot_json, default_num_slots=2, no_balance_failures=True, keep_receiver_upfront_fee=True)
+	return LNModel(snapshot_json, default_num_slots=DEFAULT_NUM_SLOTS, no_balance_failures=True, keep_receiver_upfront_fee=True)
 
 
 def get_example_sim():
@@ -35,6 +37,64 @@ def get_example_sim():
 		num_runs_per_simulation=1,
 		subtract_last_hop_upfront_fee_for_honest_payments=False)
 	return sim
+
+
+def test_no_routes():
+	with open(TEST_SNAPSHOT_FILENAME, 'r') as snapshot_file:
+		snapshot_json = json.load(snapshot_file)
+	del snapshot_json["channels"][1]
+	ln_model = LNModel(snapshot_json, default_num_slots=2, no_balance_failures=True, keep_receiver_upfront_fee=True)
+	sim = Simulator(
+		ln_model,
+		target_hops=[("Alice", "Mary"), ("Charlie", "Dave")],
+		max_num_attempts_per_route_honest=1,
+		max_num_attempts_per_route_jamming=500,
+		max_num_routes_honest=1,
+		max_num_routes_jamming=1,
+		num_runs_per_simulation=1,
+		subtract_last_hop_upfront_fee_for_honest_payments=False)
+	sch = Schedule(duration=1)
+	sch.put_event(0, Event("Alice", "Dave", 100, 7, False))
+	sch.put_event(0, Event("Alice", "Dave", 100, 7, True))
+	num_sent, num_failed, num_reached_receiver = sim.execute_schedule(sch)
+	assert(num_sent == 0)
+
+
+def test_not_enough_attempts():
+	sim = Simulator(
+		get_example_ln_model(),
+		target_hops=[("Mary", "Charlie")],
+		max_num_attempts_per_route_honest=1,
+		max_num_attempts_per_route_jamming=1,
+		max_num_routes_honest=1,
+		max_num_routes_jamming=1,
+		num_runs_per_simulation=1,
+		subtract_last_hop_upfront_fee_for_honest_payments=False)
+	sch = Schedule(duration=1)
+	sch.put_event(0, Event("Alice", "Dave", 100, 7, False))
+	num_sent, num_failed, num_reached_receiver = sim.execute_schedule(sch)
+	assert(num_sent == 1)
+	assert(num_sent == num_failed == num_reached_receiver)
+
+
+def test_jammer_jammed():
+	ln_model = get_example_ln_model()
+	ln_model.add_jammers_sending_channel(node="Alice", num_slots=1)
+	sim = Simulator(
+		ln_model,
+		target_hops=[("Charlie", "Dave")],
+		max_num_attempts_per_route_honest=1,
+		max_num_attempts_per_route_jamming=500,
+		max_num_routes_honest=1,
+		max_num_routes_jamming=1,
+		num_runs_per_simulation=1,
+		subtract_last_hop_upfront_fee_for_honest_payments=False)
+	sch = Schedule(duration=1)
+	sch.put_event(0, Event("JammerSender", "Dave", 100, 7, False))
+	num_sent, num_failed, num_reached_receiver = sim.execute_schedule(sch)
+	assert(num_sent == 2)
+	assert(num_failed == 2)
+	assert(num_reached_receiver == 1)
 
 
 def test_simulator_one_successful_payment():

@@ -1,5 +1,4 @@
 from chdir import ErrorType
-#from channel import Channel
 from utils import generate_id
 
 import logging

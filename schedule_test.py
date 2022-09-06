@@ -1,6 +1,6 @@
-from schedule import Schedule, HonestSchedule, JammingSchedule, Event
-
 import pytest
+
+from schedule import Schedule, HonestSchedule, JammingSchedule, Event
 
 
 @pytest.fixture

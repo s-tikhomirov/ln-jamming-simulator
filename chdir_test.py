@@ -1,5 +1,4 @@
 from chdir import ChannelDirection, FeeType
-from channel import Channel
 from lnmodel import InFlightHtlc
 
 

@@ -1,8 +1,3 @@
-from params import FeeParams, ProtocolParams, PaymentFlowParams
-from lnmodel import LNModel, FeeType
-from simulator import Simulator
-from schedule import HonestSchedule, JammingSchedule
-
 import argparse
 from time import time
 from random import seed
@@ -10,6 +5,11 @@ import json
 import csv
 import sys
 import networkx as nx
+
+from params import FeeParams, ProtocolParams, PaymentFlowParams
+from lnmodel import LNModel, FeeType
+from simulator import Simulator
+from schedule import HonestSchedule, JammingSchedule
 
 import logging
 logger = logging.getLogger(__name__)
@@ -193,22 +193,22 @@ def main():
 		# open jammer's channels
 		assert((jammer_sends_to_nodes is None) == (jammer_receives_from_nodes is None))
 		jammer_opens_channels_to_all_targets = jammer_sends_to_nodes is None
-		jammer_num_slots_multiplier = len(target_hops) * (ProtocolParams["NUM_SLOTS"] + 1)
+		jammer_num_slots = len(target_hops) * (args.default_num_slots + 1)
 		if jammer_opens_channels_to_all_targets:
 			logger.info(f"Jammer opens channels to all target hops")
 			for (jammer_sends_to, jammer_receives_from) in target_hops:
 				ln_model.add_jammers_sending_channel(
 					node=jammer_sends_to,
-					num_slots_multiplier=jammer_num_slots_multiplier)
+					num_slots=jammer_num_slots)
 				ln_model.add_jammers_receiving_channel(
 					node=jammer_receives_from,
-					num_slots_multiplier=jammer_num_slots_multiplier)
+					num_slots=jammer_num_slots)
 		else:
 			logger.info(f"Jammer opens channels only to {jammer_sends_to_nodes}, {jammer_receives_from_nodes}")
 			ln_model.add_jammers_channels(
 				send_to_nodes=jammer_sends_to_nodes,
 				receive_from_nodes=jammer_receives_from_nodes,
-				num_slots_multiplier=jammer_num_slots_multiplier)
+				num_slots=jammer_num_slots)
 
 		ln_model.set_fee_for_all(
 			FeeType.SUCCESS,

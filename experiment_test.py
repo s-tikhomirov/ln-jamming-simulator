@@ -1,11 +1,10 @@
-from lnmodel import LNModel, FeeType
-from simulator import Simulator
-from params import PaymentFlowParams, FeeParams
-
 from math import ceil
 import pytest
 import json
 
+from lnmodel import LNModel, FeeType
+from simulator import Simulator
+from params import PaymentFlowParams, FeeParams
 from schedule import HonestSchedule, JammingSchedule
 
 import logging
@@ -13,11 +12,13 @@ logger = logging.getLogger(__name__)
 
 WHEEL_SNAPSHOT_FILENAME = "./snapshots/listchannels_wheel.json"
 
+DEFAULT_NUM_SLOTS = 5
+
 
 def get_example_ln_model():
 	with open(WHEEL_SNAPSHOT_FILENAME, 'r') as snapshot_file:
 		snapshot_json = json.load(snapshot_file)
-	return LNModel(snapshot_json, default_num_slots=2, no_balance_failures=True, keep_receiver_upfront_fee=True)
+	return LNModel(snapshot_json, default_num_slots=DEFAULT_NUM_SLOTS, no_balance_failures=True, keep_receiver_upfront_fee=True)
 
 
 @pytest.fixture
@@ -39,6 +40,34 @@ def example_sim():
 	return sim
 
 
+def test_simulator_jamming_schedule(example_sim):
+	# order of target hop is important to invoke looped route logic
+	target_hops = [("Charlie", "Hub"), ("Hub", "Bob"), ("Alice", "Hub"), ("Hub", "Dave")]
+	duration = 1
+
+	def schedule_generation_function_jamming():
+		sch = JammingSchedule(duration=duration)
+		sch.populate(target_hops)
+		return sch
+	simulator = example_sim
+	simulator.target_hops = target_hops
+	simulator.max_num_routes_jamming = 10
+	# we need an odd number of slots to test this behavior
+	# i.e.: unjammed slot in two-loop route failed at the second loop
+	assert(simulator.ln_model.default_num_slots % 2 == 1)
+	simulator.ln_model.add_jammers_channels(
+		send_to_nodes=["Alice", "Charlie", "Hub"],
+		receive_from_nodes=["Dave", "Hub"],
+		num_slots=(DEFAULT_NUM_SLOTS + 1) * len(target_hops))
+	results = simulator.run_simulation_series(
+		schedule_generation_function_jamming,
+		upfront_base_coeff_range=[0.001],
+		upfront_rate_coeff_range=[0.1])
+	logger.info(f"{results}")
+	assert(results is not None)
+	assert_jam_results_correctness(simulator, duration, results)
+
+
 def test_simulator_honest_schedule(example_sim):
 
 	def schedule_generation_function_honest():
@@ -53,7 +82,7 @@ def test_simulator_honest_schedule(example_sim):
 		schedule_generation_function_honest,
 		upfront_base_coeff_range=[0, 0.001],
 		upfront_rate_coeff_range=[0, 0.1])
-	#logger.info(f"{results}")
+	logger.info(f"{results}")
 	assert(results is not None)
 	for res in results:
 		stats = res["stats"]
@@ -77,32 +106,7 @@ def test_simulator_honest_schedule(example_sim):
 				assert(revenues["Bob"] > 0)
 
 
-def test_simulator_jamming_schedule(example_sim):
-	target_hops = [("Alice", "Hub"), ("Hub", "Dave")]
-	duration = 300
-
-	def schedule_generation_function_jamming():
-		sch = JammingSchedule(duration=duration)
-		sch.populate(target_hops)
-		return sch
-	simulator = example_sim
-	simulator.target_hops = target_hops
-	simulator.max_num_routes_jamming = 10
-	simulator.ln_model.add_jammers_channels(
-		send_to_nodes=["Alice", "Hub"],
-		receive_from_nodes=["Dave", "Hub"],
-		num_slots_multiplier=2)
-	results = simulator.run_simulation_series(
-		schedule_generation_function_jamming,
-		upfront_base_coeff_range=[0, 0.001],
-		upfront_rate_coeff_range=[0, 0.1])
-	logger.info(f"{results}")
-	assert(results is not None)
-	assert_jam_results_correctness(simulator, duration, results)
-
-
 def test_simulator_jamming_fixed_route(example_sim):
-	# FIXME: this doesn't pass
 	target_hops = [("Alice", "Hub"), ("Hub", "Dave")]
 	duration = 8
 
@@ -116,7 +120,7 @@ def test_simulator_jamming_fixed_route(example_sim):
 	simulator.ln_model.add_jammers_channels(
 		send_to_nodes=["Alice"],
 		receive_from_nodes=["Dave"],
-		num_slots_multiplier=2)
+		num_slots=(DEFAULT_NUM_SLOTS + 1) * len(target_hops))
 	results = simulator.run_simulation_series(
 		schedule_generation_function_jamming,
 		upfront_base_coeff_range=[0],

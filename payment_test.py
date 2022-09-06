@@ -1,9 +1,9 @@
+from math import ceil, isclose
+import pytest
+
 from payment import Payment
 from lnmodel import LNModel
 from simulator import Simulator
-
-from math import ceil, isclose
-import pytest
 
 
 @pytest.fixture
