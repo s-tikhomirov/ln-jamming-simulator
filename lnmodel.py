@@ -379,7 +379,8 @@ class LNModel:
 		payment_attempt_id = payment.id + "-" + attempt_id
 		logger.debug(f"{sender} makes payment attempt {payment_attempt_id}")
 		#logger.debug(f"{payment}")
-		reached_receiver, last_node_reached, first_node_not_reached, error_type = False, None, None, None
+		reached_receiver, error_type = False, None
+		last_node_reached, first_node_not_reached = sender, payment.downstream_node
 		# A temporary data structure to store HTLCs before the payment reaches the receiver
 		# If the payment fails at a routing node, we don't remember in-flight HTLCs.
 		import collections

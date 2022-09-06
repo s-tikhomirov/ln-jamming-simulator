@@ -266,6 +266,13 @@ def test_body_for_amount_function():
 	# 986 + 14.86 = 1000.986
 	assert(adjusted_amount == 986)
 
+	adjusted_amount = Simulator.body_for_amount(
+		target_amount,
+		upfront_fee_function,
+		max_steps=3)
+	logger.debug(f"{adjusted_amount}")
+	assert(adjusted_amount == 875)
+
 
 def test_error_response_honest():
 	sim = Simulator(

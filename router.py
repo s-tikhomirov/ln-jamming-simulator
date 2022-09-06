@@ -91,6 +91,15 @@ class Router:
 				continue
 			target_hops_per_route -= 1
 
+	def is_suitable(self, route):
+		if len(route) > self.max_route_length:
+			#logger.debug(f"Route {route} too long (length {len(route)} > {self.max_route_length}), discarding")
+			return False
+		if Router.has_repeated_hop(route) and not self.allow_repeated_hops:
+			#logger.debug(f"Route {route} has repeated hop, discarding")
+			return False
+		return True
+
 	def get_route_via_hops(self, hops_permutation):
 		# TODO: should we return one route, or yield multiple routes if possible via a given permutation?
 		#logger.debug(f"Searching for route from {self.sender} to {self.receiver} via {hops_permutation}")
@@ -114,19 +123,14 @@ class Router:
 			#logger.debug(f"Appending d_node {d_node}")
 			route.append(d_node)
 			#logger.debug(f"Route of length {len(route)} now is {route}")
-			if len(route) > self.max_route_length:
-				#logger.debug(f"Route {route} too long (length {len(route)} > {self.max_route_length}), discarding")
+			if not self.is_suitable(route):
 				return None
 			prev_d_node = d_node
 		path_to_receiver = self.paths_to_receiver[prev_d_node]
 		#logger.debug(f"path to receiver: {path_to_receiver}")
 		#logger.debug(f"Appending {path_to_receiver[1:]}")
 		route.extend(path_to_receiver[1:])
-		if len(route) > self.max_route_length:
-			#logger.debug(f"Route {route} too long (length {len(route)} > {self.max_route_length}), discarding")
-			return None
-		if Router.has_repeated_hop(route) and not self.allow_repeated_hops:
-			#logger.debug(f"Route {route} has repeated hop, discarding")
+		if not self.is_suitable(route):
 			return None
 		assert(route[0] == self.sender and route[-1] == self.receiver)
 		#logger.debug(f"Returning {route}")

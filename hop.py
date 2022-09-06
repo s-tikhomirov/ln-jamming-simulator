@@ -58,6 +58,9 @@ class Hop:
 	def get_num_slots_occupied(self, direction):
 		return sum(ch.get_num_slots_occupied(direction) for ch in self.channels.values())
 
+	def get_jammed_status(self, direction, time):
+		return (self.is_jammed(direction, time), self.get_num_slots_occupied(direction))
+
 	def __repr__(self):  # pragma no cover
 		s = "Hop with properties:"
 		s += "Channels:	" + str(self.channels.items())

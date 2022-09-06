@@ -148,6 +148,15 @@ def test_first_permutation_element_index_not_in_path():
 	assert(Router.first_permutation_element_index_not_in_path(((b, c), (a, b)), path) == 1)
 
 
+def test_discart_route_with_repeated_hop(wheel_router):
+	target_hops = [("Hub", "Bob"), ("Alice", "Hub"), ("Charlie", "Hub"), ("Hub", "Dave")]
+	max_route_length = 20
+	wheel_router.update_route_generator(target_hops, allow_repeated_hops=False)
+	routes_list = [r for r in wheel_router.routes]
+	logger.debug(f"{routes_list}")
+	assert(all(not Router.has_repeated_hop(r) for r in routes_list))
+
+
 '''
 def test_routes_real():
 	ln_model = get_ln_model(ROUTER_REAL_SNAPSHOT_FILENAME)

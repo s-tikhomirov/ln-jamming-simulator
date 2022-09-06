@@ -145,6 +145,9 @@ class Simulator:
 					self.handle_jam_with_static_route(event)
 				else:
 					self.handle_jam_with_router(event)
+				next_batch_time = self.now + event.processing_delay
+				logger.debug(f"Moving to the next batch: putting jam {event} into schedule for time {next_batch_time}")
+				self.schedule.put_event(next_batch_time, event)
 			else:
 				self.handle_honest_payment(event)
 		if self.schedule.is_empty():
@@ -170,11 +173,6 @@ class Simulator:
 		logger.debug(f"Jammed hop {jammed_hop}")
 
 	def handle_jam_with_router(self, event):
-		def get_jammed_status():
-			return [(
-				hop,
-				self.ln_model.get_hop(*hop).is_jammed(hop[0] < hop[1], self.now),
-				self.ln_model.get_hop(*hop).get_num_slots_occupied(hop[0] < hop[1])) for hop in self.target_hops]
 		max_num_routes = self.max_num_routes_jamming
 		target_hops_unjammed = self.target_hops.copy()
 		router = Router(self.ln_model, event.amount, event.sender, event.receiver)
@@ -198,18 +196,15 @@ class Simulator:
 			logger.debug(f"Jammed hop {jammed_hop}")
 			# exclude jammed hop from the router # we can't route through the jammed hop it anyway, no matter if it's among target hops or not
 			# the only exception is the jammer's own channels
+			if "JammerSender" in jammed_hop or "JammerReceiver" in jammed_hop:
+				logger.error(f"Jammer's node is in jammed hop {jammed_hop}")
+				logger.info(f"{self.ln_model.get_hop(*jammed_hop).get_jammed_status(jammed_hop[0] < jammed_hop[1], self.now)}")
 			assert("JammerSender" not in jammed_hop and "JammerReceiver" not in jammed_hop)
 			assert(jammed_hop in target_hops_unjammed or jammed_hop not in self.target_hops)
 			# only exclude the newly jammed hop from graph if it's REALLY jammed
 			if self.ln_model.hop_is_jammed(jammed_hop, self.now):
-				if not self.jammer_must_route_via_nodes:
-					logger.debug(f"Removing {jammed_hop} from router")
-					router.remove_hop(jammed_hop)
-				# FIXME: in looped routes, if a hop is jammed at the second loop, we mark it as jammed and roll back the payment
-				# however, the FIRST loop gets rolled back too! => one slot is left unjammed
-				# a simple solution is to prohibit circular routes - required modifications in router
-				# alternatively, track how many times each jammed hop appears in the route
-				# and "finally-jam" it with shorter routes afterwards
+				logger.debug(f"Removing {jammed_hop} from router")
+				router.remove_hop(jammed_hop)
 				if jammed_hop in target_hops_unjammed:
 					logger.debug(f"Removing {jammed_hop} from unjammed hops {target_hops_unjammed}")
 					target_hops_unjammed.remove(jammed_hop)
@@ -227,15 +222,12 @@ class Simulator:
 				else:
 					logger.debug(f"All target hops jammed at time {self.now}")
 		#logger.info(f"Out of loop; num_route = {num_route}")
-		#logger.info(f"Target hops jammed status: {get_jammed_status()}")
+		#logger.info(f"Target hops jammed status: {[(hop, self.ln_model.get_hop(*hop).get_jammed_status(hop[0] < hop[1], self.now)) for hop in self.target_hops]}")
 		target_hops_left_unjammed = [hop for hop in self.target_hops if not self.ln_model.hop_is_jammed(hop, self.now)]
 		if target_hops_left_unjammed:
 			# Note: for hard-coded routes with a fixed number of slots, we actually jam the whole route at once
 			# But we can't confirm this because we only get a NO_SLOTS error from the first hop in the route
 			logger.warning(f"Couldn't jam hops {target_hops_left_unjammed} after {num_route+1} routes at time {self.now}.")
-		next_batch_time = self.now + event.processing_delay
-		logger.debug(f"Moving to the next batch: putting jam {event} into schedule for time {next_batch_time}")
-		self.schedule.put_event(next_batch_time, event)
 
 	def send_jam_via_route(self, event, route):
 		assert(event.desired_result is False)
@@ -302,7 +294,7 @@ class Simulator:
 		if not self.subtract_last_hop_upfront_fee_for_honest_payments:
 			receiver_amount = event.amount
 		else:
-			logger.debug(f"Subtracting last-hop upfront fee from amount {event.amount}")
+			logger.info(f"Subtracting last-hop upfront fee from amount {event.amount}")
 			pre_receiver, receiver = route[-2], route[-1]
 			logger.debug(f"Pre-receiver, receiver: {pre_receiver} {receiver} ")
 			chosen_cid = self.ln_model.get_cheapest_cid_in_hop(pre_receiver, receiver, event.amount)
@@ -351,16 +343,22 @@ class Simulator:
 			Given target_amount and fee function, find amount such that:
 			amount + fee(amount) ~ target_amount
 		'''
+		assert(precision >= 1)
 		min_body, max_body, num_step = 0, target_amount, 0
-		while True:
-			num_step += 1
+		while num_step < max_steps:
 			body = round((min_body + max_body) / 2)
 			fee = upfront_fee_function(body)
 			amount = body + fee
-			if abs(target_amount - amount) < precision or num_step > max_steps:
+			if abs(target_amount - amount) < precision:
 				break
 			if amount < target_amount:
 				min_body = body
 			else:
 				max_body = body
+			num_step += 1
+		if abs(target_amount - amount) >= precision:
+			logger.debug(f"Couldn't reach precision {precision} in body for amount {target_amount}!")
+			logger.debug(f"Made {num_step} of {max_steps} allowed.")
+			assert(num_step == max_steps)
+		logger.debug(f"{num_step}")
 		return body
