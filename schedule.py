@@ -122,7 +122,7 @@ class JammingSchedule(Schedule):
 	def __init__(self, duration=0):
 		Schedule.__init__(self, duration)
 
-	def populate(self, one_jam_per_each_or_hops=[], sender="JammerSender", receiver="JammerReceiver"):
+	def populate(self, one_jam_per_each_of_hops=[], sender="JammerSender", receiver="JammerReceiver"):
 		# sender and receiver are "JammerSender" and "JammerReceiver"
 		# generate a jamming schedule that assumes that the jammer connects
 		# to ALL target nodes (JammerSender->A and B->JammerReceiver)
@@ -131,8 +131,8 @@ class JammingSchedule(Schedule):
 		jam_delay = PaymentFlowParams["JAM_DELAY"]
 		jam_sender = sender
 		jam_receiver = receiver
-		if one_jam_per_each_or_hops:
-			for target_hop in one_jam_per_each_or_hops:
+		if one_jam_per_each_of_hops:
+			for target_hop in one_jam_per_each_of_hops:
 				initial_jam = Event(
 					sender=jam_sender,
 					receiver=jam_receiver,

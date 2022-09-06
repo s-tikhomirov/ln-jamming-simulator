@@ -89,13 +89,15 @@ def main():
 		"--no_balance_failures",
 		dest="no_balance_failures",
 		default=False,
-		action="store_true"
+		action="store_true",
+		help="Never fail payments because of low capacity."
 	)
 	parser.add_argument(
 		"--keep_receiver_upfront_fee",
 		dest="keep_receiver_upfront_fee",
 		default=True,
-		action="store_true"
+		action="store_true",
+		help="Separately account for receiver's upfront fee (even if it had been subtracted from payment amount)."
 	)
 	parser.add_argument(
 		"--upfront_base_coeff_range",
@@ -110,6 +112,13 @@ def main():
 		type=float,
 		default=DEFAULT_UPFRONT_RATE_COEFF_RANGE,
 		help="A list of values for upfront base fee coefficient."
+	)
+	parser.add_argument(
+		"--compact_output",
+		dest="compact_output",
+		default=False,
+		action="store_true",
+		help="Only store revenues of the target node (must be present) and the jammer's nodes."
 	)
 	parser.add_argument(
 		"--seed",
@@ -140,6 +149,18 @@ def main():
 		logger.debug(f"Initializing randomness seed: {args.seed}")
 		seed(args.seed)
 
+	def get_compact_output(results, relevant_nodes):
+		from copy import deepcopy
+		results_compact = deepcopy(results)
+		for i, result in enumerate(results):
+			# sic: we can't modify a JSON while iterating through it
+			# hence, we iterate through the original results
+			# and delete the unnecessary elements in the compact results
+			for node in result["revenues"]:
+				if node not in relevant_nodes:
+					del results_compact[i]["revenues"][node]
+		return results_compact
+
 	def run_scenario(
 		snapshot_filename,
 		honest_senders=None,
@@ -150,7 +171,8 @@ def main():
 		jammer_receives_from_nodes=None,
 		honest_must_route_via_nodes=[],
 		jammer_must_route_via_nodes=[],
-		max_target_hops_per_route=ProtocolParams["MAX_ROUTE_LENGTH"] - 2):
+		max_target_hops_per_route=ProtocolParams["MAX_ROUTE_LENGTH"] - 2,
+		compact_output=False):
 
 		with open(snapshot_filename, 'r') as snapshot_file:
 			snapshot_json = json.load(snapshot_file)
@@ -195,20 +217,17 @@ def main():
 		jammer_opens_channels_to_all_targets = jammer_sends_to_nodes is None
 		jammer_num_slots = len(target_hops) * (args.default_num_slots + 1)
 		if jammer_opens_channels_to_all_targets:
-			logger.info(f"Jammer opens channels to all target hops")
-			for (jammer_sends_to, jammer_receives_from) in target_hops:
-				ln_model.add_jammers_sending_channel(
-					node=jammer_sends_to,
-					num_slots=jammer_num_slots)
-				ln_model.add_jammers_receiving_channel(
-					node=jammer_receives_from,
-					num_slots=jammer_num_slots)
+			logger.info(f"Jammer opens channels to and from all target hops")
+			jammer_sends_to = [hop[0] for hop in target_hops]
+			jammer_receives_from = [hop[1] for hop in target_hops]
 		else:
-			logger.info(f"Jammer opens channels only to {jammer_sends_to_nodes}, {jammer_receives_from_nodes}")
-			ln_model.add_jammers_channels(
-				send_to_nodes=jammer_sends_to_nodes,
-				receive_from_nodes=jammer_receives_from_nodes,
-				num_slots=jammer_num_slots)
+			logger.info(f"Jammer opens channels to {jammer_sends_to_nodes} and from {jammer_receives_from_nodes}")
+			jammer_sends_to = jammer_sends_to_nodes
+			jammer_receives_from = jammer_receives_from_nodes
+		ln_model.add_jammers_channels(
+			send_to_nodes=jammer_sends_to,
+			receive_from_nodes=jammer_receives_from,
+			num_slots=jammer_num_slots)
 
 		ln_model.set_fee_for_all(
 			FeeType.SUCCESS,
@@ -229,7 +248,7 @@ def main():
 
 		def schedule_generation_function_jamming():
 			sch = JammingSchedule(duration=args.simulation_duration)
-			sch.populate(one_jam_per_each_or_hops=target_hops)
+			sch.populate()
 			return sch
 
 		results_jamming = simulator.run_simulation_series(
@@ -251,6 +270,12 @@ def main():
 			schedule_generation_function_honest,
 			args.upfront_base_coeff_range,
 			args.upfront_rate_coeff_range)
+
+		if args.compact_output:
+			assert(target_node is not None)
+			relevant_nodes = [target_node, "JammerSender", "JammerReceiver"]
+			results_jamming = get_compact_output(results_jamming, relevant_nodes)
+			results_honest = get_compact_output(results_honest, relevant_nodes)
 
 		results = {
 			"params": {
@@ -284,17 +309,6 @@ def main():
 		}
 		return results
 
-	def run_real_scenario():
-		big_node = "02ad6fb8d693dc1e4569bcedefadf5f72a931ae027dc0f0c544b34c1c6f3b9a02b"
-		small_node = "03c2d52cdcb5ddd40d62ba3c7197260b0f7b4dcc29ad64724c68426045919922f0"
-		target_node = small_node
-		results = run_scenario(
-			snapshot_filename=REAL_SNAPSHOT_FILENAME,
-			target_node=target_node,
-			honest_must_route_via_nodes=[target_node],
-			max_target_hops_per_route=5)
-		return results
-
 	if args.scenario == "abcd":
 		results = run_scenario(
 			snapshot_filename=ABCD_SNAPSHOT_FILENAME,
@@ -304,8 +318,8 @@ def main():
 	elif args.scenario == "wheel-hardcoded-route":
 		results = run_scenario(
 			snapshot_filename=WHEEL_SNAPSHOT_FILENAME,
-			honest_senders=["Alice", "Bob", "Charlie", "Dave"],
-			honest_receivers=["Alice", "Bob", "Charlie", "Dave"],
+			honest_senders=["Alice", "Charlie"],
+			honest_receivers=["Bob", "Dave"],
 			target_hops=[("Alice", "Hub"), ("Hub", "Bob"), ("Charlie", "Hub"), ("Hub", "Dave")],
 			jammer_sends_to_nodes=["Alice"],
 			jammer_receives_from_nodes=["Dave"],
@@ -319,7 +333,16 @@ def main():
 			target_node="Hub",
 			honest_must_route_via_nodes=["Hub"])
 	elif args.scenario == "real":
-		results = run_real_scenario()
+		big_node = "02ad6fb8d693dc1e4569bcedefadf5f72a931ae027dc0f0c544b34c1c6f3b9a02b"
+		small_node = "03c2d52cdcb5ddd40d62ba3c7197260b0f7b4dcc29ad64724c68426045919922f0"
+		target_node = small_node
+		results = run_scenario(
+			snapshot_filename=REAL_SNAPSHOT_FILENAME,
+			target_node=target_node,
+			honest_must_route_via_nodes=[target_node],
+			max_target_hops_per_route=5,
+			compact_output=True)
+		return results
 	else:
 		logger.error(f"Not yet properly implemented for scenario {args.scenario}!")
 		exit()
@@ -348,7 +371,7 @@ def results_to_csv_file(results, timestamp):
 	with open("results/" + str(timestamp) + "-results" + ".csv", "w", newline="") as f:
 		writer = csv.writer(f, delimiter=",", quotechar="'", quoting=csv.QUOTE_MINIMAL)
 		for simulation_type in results["simulations"]:
-			revenue_titles = [node[:1] + "_" + simulation_type[:1] + "_" + "revenue" for node in nodes]
+			revenue_titles = [simulation_type[:1] + "_" + node[:7] for node in nodes]
 			writer.writerow([
 				"upfront_base_coeff",
 				"upfront_rate_coeff",

@@ -140,12 +140,14 @@ class Simulator:
 			logger.debug(f"Got event: {event}")
 			is_jam = event.desired_result is False
 			if is_jam:
+				logger.debug(f"Start handling jam batch at time {self.now}")
 				if self.jammer_must_route_via_nodes:
 					self.handle_jam_with_static_route(event)
 				else:
 					self.handle_jam_with_router(event)
 				next_batch_time = self.now + event.processing_delay
-				logger.debug(f"Moving to the next batch: putting jam {event} into schedule for time {next_batch_time}")
+				logger.debug(f"Moving to the next jam batch")
+				logger.debug(f"Pushing jam {event} into schedule for time {next_batch_time}")
 				self.schedule.put_event(next_batch_time, event)
 			else:
 				self.handle_honest_payment(event)
@@ -165,9 +167,9 @@ class Simulator:
 		assert(rg.has_edge("JammerSender", must_nodes[0]))
 		assert(all(rg.has_edge(hop[0], hop[1]) for hop in zip(must_nodes, must_nodes[1:])))
 		assert(rg.has_edge(must_nodes[-1], "JammerReceiver"))
-		route_from_sender = nx.shortest_path(rg, "JammerSender", must_nodes[0])
-		route_to_receiver = nx.shortest_path(rg, must_nodes[-1], "JammerReceiver")
-		route = route_from_sender + must_nodes[1:-1] + route_to_receiver
+		#route_from_sender = nx.shortest_path(rg, "JammerSender", must_nodes[0])
+		#route_to_receiver = nx.shortest_path(rg, must_nodes[-1], "JammerReceiver")
+		route = ["JammerSender"] + must_nodes + ["JammerReceiver"]
 		num_sent, num_failed, num_reached_receiver, last_node_reached, first_node_not_reached = self.send_jam_via_route(event, route)
 		assert(first_node_not_reached is not None)
 		jammed_hop = (last_node_reached, first_node_not_reached)
@@ -231,7 +233,7 @@ class Simulator:
 			# sic! num_routes, not (num_routes + 1): though we start at zero, we count the last interation which breaks before producing a route
 			logger.warning(f"Couldn't jam hops {target_hops_left_unjammed} after {num_route} routes at time {self.now}.")
 		else:
-			logger.info(f"All target hops are jammed at time {self.now}")
+			logger.debug(f"All target hops are jammed at time {self.now}")
 
 	def send_jam_via_route(self, event, route):
 		assert(event.desired_result is False)
@@ -322,7 +324,6 @@ class Simulator:
 			#logger.debug(f"Wrapping payment for fee policy from {u_node} to {d_node}")
 			chosen_cid = self.ln_model.get_cheapest_cid_in_hop(u_node, d_node, amount)
 			chosen_ch_dir = self.ln_model.get_hop(u_node, d_node).get_channel(chosen_cid).directions[u_node < d_node]
-			#logger.debug(f"Chosen channel {chosen_cid}")
 			is_last_hop = p is None
 			p = Payment(
 				downstream_payment=p,
