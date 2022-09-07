@@ -2,7 +2,9 @@ import networkx as nx
 from random import random
 import collections
 
-from chdir import ChannelDirection, ErrorType, FeeType, dir0, dir1
+from direction import Direction
+from channelindirection import ChannelInDirection
+from enumtypes import ErrorType, FeeType
 from channel import Channel
 from hop import Hop
 from htlc import InFlightHtlc
@@ -57,7 +59,7 @@ class LNModel:
 	def get_graphs_from_json(self, snapshot_json):
 		# Channel graph is an UNDIRECTED graph (MultiGraph).
 		# Each edge corresponds to a channel. Edge id = channel id.
-		# Edge attributes: capacity, directions: [ChannelDirection0, ChannelDirection1]
+		# Edge attributes: capacity, directions: [ChannelInDirection0, ChannelInDirection1]
 		self.channel_graph = nx.Graph()
 		# Routing graph is a DIRECTED graph (MultiDiGraph) from the same JSON object.
 		# Each edge corresponds to an enabled (i.e., "active") channel direction.
@@ -97,7 +99,7 @@ class LNModel:
 		self.add_edge_to_routing_graph(src, dst, capacity, cid)
 
 	def add_edge_to_channel_graph(self, src, dst, capacity, cid, upfront_base_fee, upfront_fee_rate, success_base_fee, success_fee_rate, num_slots):
-		chdir = ChannelDirection(
+		chdir = ChannelInDirection(
 			num_slots=num_slots,
 			upfront_base_fee=upfront_base_fee,
 			upfront_fee_rate=upfront_fee_rate,
@@ -117,8 +119,7 @@ class LNModel:
 			hop.add_channel(ch, cid)
 		else:
 			ch = hop.get_channel(cid)
-		direction = (src < dst)
-		ch.add_chdir(chdir, direction)
+		ch.add_chdir(chdir, Direction(src, dst))
 
 	def add_edge_to_routing_graph(self, src, dst, capacity, cid):
 		# TODO: do we need cid here?
@@ -161,7 +162,7 @@ class LNModel:
 
 	def get_cids_can_forward_by_fee(self, u_node, d_node, amount):
 		hop = self.get_hop(u_node, d_node)
-		return hop.get_cids_can_forward_by_fee(amount, direction=(u_node < d_node))
+		return hop.get_cids_can_forward_by_fee(amount, Direction(u_node, d_node))
 
 	def reset_revenue(self, node):
 		self.channel_graph.nodes[node][FeeType.UPFRONT.value] = 0
@@ -205,7 +206,7 @@ class LNModel:
 		logger.debug(f"Choosing cheapest cid in hop from {u_node} to {d_node}")
 		hop = self.get_hop(u_node, d_node)
 		#logger.debug(f"Hop: {hop}")
-		return hop.get_cheapest_cid(amount, direction=(u_node < d_node))
+		return hop.get_cheapest_cid(amount, Direction(u_node, d_node))
 
 	def get_prob_balance_failure(self, u_node, d_node, cid, amount):
 		channels_dict = self.get_routing_graph_edge_data(u_node, d_node)
@@ -252,8 +253,7 @@ class LNModel:
 			hop = self.get_hop(node_1, node_2)
 			for ch in hop.get_channels():
 				for (u_node, d_node) in ((node_1, node_2), (node_2, node_1)):
-					direction = u_node < d_node
-					ch_dir = ch.directions[direction]
+					ch_dir = ch.directions[Direction(u_node, d_node)]
 					if ch_dir is not None:
 						while not ch_dir.is_empty():
 							next_htlc_time = ch_dir.get_top_timestamp()
@@ -277,9 +277,8 @@ class LNModel:
 
 	def get_ch_dirs(self, hop):
 		u_node, d_node = hop
-		direction = (u_node < d_node)
 		hop_data = self.get_hop(u_node, d_node)
-		return [hop_data.get_channel(cid).directions[direction] for cid in hop_data.channels]
+		return [hop_data.get_channel(cid).directions[Direction(u_node, d_node)] for cid in hop_data.channels]
 
 	def hop_is_jammed(self, hop, now):
 		ch_dirs = self.get_ch_dirs(hop)
@@ -319,7 +318,7 @@ class LNModel:
 			#chosen_cid, chosen_ch_dir = self.lowest_fee_enabled_channel(u_node, d_node, p.amount)
 			#logger.debug(f"Routing through channel {chosen_cid} from {u_node} to {d_node}")
 			chosen_cid = self.get_cheapest_cid_in_hop(u_node, d_node, p.amount)
-			chosen_ch_dir = self.get_hop(u_node, d_node).get_channel(chosen_cid).directions[u_node < d_node]
+			chosen_ch_dir = self.get_hop(u_node, d_node).get_channel(chosen_cid).directions[Direction(u_node, d_node)]
 
 			# Deliberately fail the payment with some probability
 			# (not used in experiments but useful for testing response to errors)
@@ -360,8 +359,7 @@ class LNModel:
 
 			# Construct an HTLC to be stored in a temporary dictionary until we know if receiver is reached
 			in_flight_htlc = InFlightHtlc(payment_attempt_id, p.success_fee, p.desired_result)
-			direction = (u_node < d_node)
-			tmp_hops_to_unstored_htlcs[(u_node, d_node)].append((chosen_cid, direction, now + p.processing_delay, in_flight_htlc))
+			tmp_hops_to_unstored_htlcs[(u_node, d_node)].append((chosen_cid, Direction(u_node, d_node), now + p.processing_delay, in_flight_htlc))
 
 			# Unwrap the next onion level for the next hop
 			p = p.downstream_payment

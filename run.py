@@ -6,7 +6,8 @@ import csv
 import sys
 
 from params import FeeParams, ProtocolParams, PaymentFlowParams
-from lnmodel import LNModel, FeeType
+from lnmodel import LNModel
+from enumtypes import FeeType
 from simulator import Simulator
 from schedule import HonestSchedule, JammingSchedule
 

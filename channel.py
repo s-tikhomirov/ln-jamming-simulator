@@ -1,4 +1,6 @@
-from chdir import dir0, dir1, ChannelDirection, ErrorType
+from channelindirection import ChannelInDirection
+from enumtypes import ErrorType
+from direction import Direction
 
 import logging
 logger = logging.getLogger(__name__)
@@ -8,15 +10,15 @@ class Channel:
 
 	def __init__(self, capacity, num_slots_per_direction=None):
 		self.capacity = capacity
-		self.directions = {dir0: None, dir1: None}
+		self.directions = {Direction.Alph: None, Direction.NonAlph: None}
 		if num_slots_per_direction is not None:
 			self.add_chdir_with_num_slots(num_slots_per_direction)
 
 	def add_chdir_with_num_slots(self, num_slots):
-		chdir_0 = ChannelDirection(num_slots)
-		chdir_1 = ChannelDirection(num_slots)
-		self.add_chdir(chdir_0, dir0)
-		self.add_chdir(chdir_1, dir1)
+		chdir_0 = ChannelInDirection(num_slots)
+		chdir_1 = ChannelInDirection(num_slots)
+		self.add_chdir(chdir_0, Direction.Alph)
+		self.add_chdir(chdir_1, Direction.NonAlph)
 
 	def is_enabled_in_direction(self, direction):
 		if self.directions[direction] is None:
@@ -27,8 +29,8 @@ class Channel:
 
 	def is_enabled_in_both_directions(self):
 		return (
-			self.is_enabled_in_direction(dir0)
-			and self.is_enabled_in_direction(dir1))
+			self.is_enabled_in_direction(Direction.Alph)
+			and self.is_enabled_in_direction(Direction.NonAlph))
 
 	def is_jammed(self, direction, time):
 		# FIXME: is a non-existent ch_dir jammed?
@@ -64,7 +66,7 @@ class Channel:
 		return chdir.get_total_fee(amount)
 
 	def reset_in_flight_htlcs(self):
-		for direction in (dir0, dir1):
+		for direction in (Direction.Alph, Direction.NonAlph):
 			if self.directions[direction] is not None:
 				self.directions[direction].reset()
 

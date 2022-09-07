@@ -1,4 +1,4 @@
-from chdir import ErrorType
+from enumtypes import ErrorType
 from utils import generate_id
 
 import logging

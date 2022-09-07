@@ -1,11 +1,12 @@
 from math import isclose, floor
 import json
 
+from direction import Direction
 from simulator import Simulator
 from event import Event
 from schedule import Schedule
-from lnmodel import LNModel, FeeType
-from chdir import ErrorType
+from lnmodel import LNModel
+from enumtypes import FeeType, ErrorType
 from params import honest_amount_function, honest_proccesing_delay_function, honest_generation_delay_function
 
 import logging
@@ -345,7 +346,7 @@ def test_error_response_honest():
 		subtract_last_hop_upfront_fee_for_honest_payments=False)
 	# an honest payment gets retried multiple times but still fails
 	sim.ln_model.get_hop("Mary", "Charlie").set_deliberate_failure_behavior_for_all_in_direction(
-		direction=("Mary" < "Charlie"),
+		direction=(Direction("Mary", "Charlie")),
 		prob=1)
 	sch = Schedule()
 	event = Event("Alice", "Dave", 100, 1, True)
@@ -369,7 +370,7 @@ def test_error_response_jamming():
 		num_runs_per_simulation=1,
 		subtract_last_hop_upfront_fee_for_honest_payments=False)
 	sim.ln_model.get_hop("Mary", "Charlie").set_deliberate_failure_behavior_for_all_in_direction(
-		direction=("Mary" < "Charlie"),
+		direction=(Direction("Mary", "Charlie")),
 		prob=1,
 		spoofing_error_type=ErrorType.LOW_BALANCE)
 	sim.ln_model.reset_with_num_slots("Alice", "Mary", 100)

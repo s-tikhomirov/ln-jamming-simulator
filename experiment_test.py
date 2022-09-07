@@ -2,7 +2,8 @@ from math import ceil
 import pytest
 import json
 
-from lnmodel import LNModel, FeeType
+from lnmodel import LNModel
+from enumtypes import FeeType
 from simulator import Simulator
 from params import PaymentFlowParams, FeeParams
 from schedule import HonestSchedule, JammingSchedule

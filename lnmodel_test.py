@@ -1,5 +1,6 @@
-from lnmodel import LNModel, FeeType, ErrorType
-from channel import dir0, dir1
+from lnmodel import LNModel
+from enumtypes import FeeType, ErrorType
+from direction import Direction
 from payment import Payment
 
 import pytest
@@ -157,16 +158,16 @@ def test_get_channel_graph_from_json():
 	assert(bc_hop.has_cid("BCx2"))
 	assert(bc_hop.get_channel("BCx0").is_enabled_in_both_directions())
 	assert(bc_hop.get_channel("BCx1").is_enabled_in_both_directions())
-	assert(bc_hop.get_channel("BCx2").is_enabled_in_direction(dir1))
-	assert(not bc_hop.get_channel("BCx2").is_enabled_in_direction(dir0))
+	assert(bc_hop.get_channel("BCx2").is_enabled_in_direction(Direction("Charlie", "Bob")))
+	assert(not bc_hop.get_channel("BCx2").is_enabled_in_direction(Direction("Bob", "Charlie")))
 
 	# Charlie - Dave have a bi-directional channel
 	# but direction Dave->Charlie is disabled
 	assert(g.has_edge(c, d))
 	cd_hop = ln_model.get_hop(c, d)
 	assert(cd_hop.get_num_cids() == 1 and cd_hop.has_cid("CDx0"))
-	assert(cd_hop.get_channel("CDx0").is_enabled_in_direction(dir0))
-	assert(not cd_hop.get_channel("CDx0").is_enabled_in_direction(dir1))
+	assert(cd_hop.get_channel("CDx0").is_enabled_in_direction(Direction("Charlie", "Dave")))
+	assert(not cd_hop.get_channel("CDx0").is_enabled_in_direction(Direction("Dave", "Charlie")))
 
 	# We also have uni-dir channels Bob->Craig->Dave
 	# (to test alternative routes)
@@ -176,8 +177,8 @@ def test_get_channel_graph_from_json():
 		assert(xy_hop.get_num_cids() == 1)
 		xy_cid = xy_hop.get_cids()[0]
 		xy_ch = xy_hop.get_channel(xy_cid)
-		assert(xy_ch.is_enabled_in_direction(dir0))
-		assert(not xy_ch.is_enabled_in_direction(dir1))
+		assert(xy_ch.is_enabled_in_direction(Direction(x, y)))
+		assert(not xy_ch.is_enabled_in_direction(Direction(y, x)))
 
 
 def test_get_routing_graph_from_json():
@@ -311,7 +312,7 @@ def test_set_fee_for_all():
 	ln_model = get_ln_model()
 	ab_hop = ln_model.get_hop(a, b)
 	ch = ab_hop.get_channel("ABx0")
-	ch_dir = ch.get_chdir(direction=(a < b))
+	ch_dir = ch.get_chdir(Direction(a, b))
 	amount = 100
 	assert(ch_dir.success_fee_function(amount) == 0)
 	ln_model.set_fee_for_all(FeeType.SUCCESS, base=1, rate=0.02)
