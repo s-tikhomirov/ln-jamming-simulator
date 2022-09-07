@@ -16,13 +16,6 @@ def test_set_get_fee():
 	assert(cd.get_total_fee(body) == success_fee + upfront_fee)
 
 
-def test_is_enabled():
-	cd_1 = ChannelInDirection(num_slots=2)
-	assert(cd_1.is_enabled())
-	cd_2 = ChannelInDirection(num_slots=2, enabled=False)
-	assert(not cd_2.is_enabled())
-
-
 def test_channel_direction():
 	cd = ChannelInDirection(num_slots=2)
 	# Before adding in-flight payments: all slots are free

@@ -68,12 +68,12 @@ class LNModel:
 		self.routing_graph = nx.MultiDiGraph()
 		logger.info(f"Creating LN model...")
 		for cd in snapshot_json["channels"]:
-			src, dst, capacity, cid, enabled = cd["source"], cd["destination"], cd["satoshis"], cd["short_channel_id"], cd["active"]
+			src, dst, capacity, cid = cd["source"], cd["destination"], cd["satoshis"], cd["short_channel_id"]
 			upfront_base_fee = cd["base_fee_millisatoshi_upfront"] / K if "base_fee_millisatoshi_upfront" in cd else 0
 			upfront_fee_rate = cd["fee_per_millionth_upfront"] / M if "fee_per_millionth_upfront" in cd else 0
 			success_base_fee = cd["base_fee_millisatoshi"] / K if "base_fee_millisatoshi" in cd else 0
 			success_fee_rate = cd["fee_per_millionth"] / M if "fee_per_millionth" in cd else 0
-			if enabled:
+			if cd["active"]:
 				self.add_edge(src, dst, capacity, cid, upfront_base_fee, upfront_fee_rate, success_base_fee, success_fee_rate)
 		logger.info(f"LN model created.")
 		logger.info(f"Channel graph has {self.channel_graph.number_of_nodes()} nodes and {self.channel_graph.number_of_edges()} channels.")

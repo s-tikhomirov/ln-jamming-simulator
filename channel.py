@@ -21,11 +21,7 @@ class Channel:
 		self.add_chdir(chdir_1, Direction.NonAlph)
 
 	def is_enabled_in_direction(self, direction):
-		if self.directions[direction] is None:
-			logger.debug(f"Direction {direction} is None")
-			return False
-		else:
-			return self.directions[direction].is_enabled()
+		return self.directions[direction] is not None
 
 	def is_enabled_in_both_directions(self):
 		return (
@@ -56,9 +52,7 @@ class Channel:
 		self.directions[direction].set_fee(fee_type, base_fee, fee_rate)
 
 	def can_forward(self, amount, direction):
-		if not self.is_enabled_in_direction(direction):
-			return False
-		return amount <= self.capacity
+		return self.is_enabled_in_direction(direction) and amount <= self.capacity
 
 	def get_total_fee_in_direction(self, amount, direction):
 		assert(self.can_forward(amount, direction))

@@ -21,8 +21,7 @@ class ChannelInDirection:
 		success_base_fee=0,
 		success_fee_rate=0,
 		deliberately_fail_prob=0,
-		spoofing_error_type=ErrorType.FAILED_DELIBERATELY,
-		enabled=True):
+		spoofing_error_type=ErrorType.FAILED_DELIBERATELY):
 		'''
 			- num_slots
 				The max size of a PriorityQueue of in-flight HTLCs.
@@ -46,16 +45,12 @@ class ChannelInDirection:
 
 			- spoofing_error_type
 				The error type to return when deliberately failing a payment.
-
-			- enabled
-				True if this ch_dir forwards payments, False if not.
 		'''
-		# FIXME: get rid of enabled
-		self.enabled = enabled
 		self.set_fee(FeeType.UPFRONT, upfront_base_fee, upfront_fee_rate)
 		self.set_fee(FeeType.SUCCESS, success_base_fee, success_fee_rate)
 		# we remember num_slots in a separate variable:
 		# there is no way to get maxsize from a queue after it's created
+		assert(num_slots > 0)
 		self.max_num_slots = num_slots
 		self.slots = PriorityQueue(maxsize=self.max_num_slots)
 		self.deliberately_fail_prob = deliberately_fail_prob
@@ -84,9 +79,6 @@ class ChannelInDirection:
 	def reset(self):
 		self.slots = PriorityQueue(maxsize=self.max_num_slots)
 
-	def is_enabled(self):
-		return self.enabled
-
 	def is_full(self):
 		return self.slots.full()
 
@@ -94,7 +86,7 @@ class ChannelInDirection:
 		return self.slots.empty()
 
 	def is_jammed(self, time):
-		return not self.is_enabled() or self.is_full() and self.slots.queue[0][0] > time
+		return self.is_full() and self.slots.queue[0][0] > time
 
 	def get_max_num_slots(self):
 		return self.max_num_slots
@@ -158,7 +150,6 @@ class ChannelInDirection:
 
 	def __repr__(self):  # pragma: no cover
 		s = "\nChannelInDirection with properties:"
-		s += "\nis enabled:	" + str(self.is_enabled())
 		s += "\nbusy slots:	" + str(self.get_num_slots_occupied())
 		s += "\nmax slots:	" + str(self.get_max_num_slots())
 		s += "\nslots full?	" + str(self.is_full())
