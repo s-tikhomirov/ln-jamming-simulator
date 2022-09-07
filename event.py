@@ -1,5 +1,4 @@
-from string import hexdigits
-from random import choice
+from utils import generate_id
 
 import logging
 logger = logging.getLogger(__name__)
@@ -11,30 +10,9 @@ class Event:
 	'''
 
 	def __init__(self, sender, receiver, amount, processing_delay, desired_result, must_route_via_nodes=[]):
-		'''
-			- sender
-				The sender of the payment.
-
-			- receiver
-				The receiver of the payment.
-
-			- amount
-				The amount the receiver will receive if the payment succeeds.
-				(Whether or not to exclude last-hop upfront fee is decided on Payment construction.)
-
-			- processing delay
-				How much would it take an HTLC to resolve, IF the corresponding payment reaches the receiver.
-				Otherwise, no HTLC is stored, and the delay is zero.
-
-			- desired_result
-				True for honest payments, False for jams.
-
-			- must_route_via_nodes
-				A tuple of (consecutive) nodes that the payment must be routed through.
-		'''
-		# ID is useful for seamless ordering inside the priority queue
 		assert(sender != receiver)
-		self.id = "".join(choice(hexdigits) for i in range(6))
+		# ID is useful for seamless ordering inside the priority queue
+		self.id = generate_id()
 		self.sender = sender
 		self.receiver = receiver
 		self.amount = amount

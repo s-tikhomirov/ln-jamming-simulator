@@ -11,8 +11,7 @@ class Router:
 
 	def __init__(self, ln_model, amount, sender, receiver, max_target_hops_per_route=None, max_route_length=None):
 		self.ln_model = ln_model
-		self.g = nx.MultiDiGraph(ln_model.get_routing_graph_for_amount(
-			amount=(1 + ln_model.capacity_filtering_safety_margin) * amount))
+		self.g = nx.MultiDiGraph(ln_model.get_routing_graph_for_amount(amount))
 		self.sender = sender
 		self.receiver = receiver
 		self.max_route_length = ProtocolParams["MAX_ROUTE_LENGTH"] if max_route_length is None else max_route_length

@@ -1,19 +1,20 @@
 import pytest
 
-from schedule import Schedule, HonestSchedule, JammingSchedule, Event
+from schedule import GenericSchedule, HonestSchedule, JammingSchedule
+from event import Event
 
 
 @pytest.fixture
 def example_schedule():
-	sch = Schedule(duration=10)
-	sch.populate(
-		senders_list=["Alice"],
-		receivers_list=["Bob"],
+	h_sch = HonestSchedule(
+		end_time=10,
+		senders=["Alice"],
+		receivers=["Bob"],
 		amount_function=lambda: 1000,
-		desired_result=True,
+		desired_result_function=lambda: True,
 		payment_processing_delay_function=lambda: 1,
 		payment_generation_delay_function=lambda: 3)
-	return sch
+	return h_sch
 
 
 def test_schedule_get_put(example_schedule):
@@ -39,14 +40,14 @@ def test_schedule_get_put(example_schedule):
 
 
 def test_get_all_events():
-	sch = Schedule(duration=10)
-	assert(sch.get_size() == 0)
+	sch = GenericSchedule(end_time=10)
+	assert(sch.get_num_events() == 0)
 	assert(sch.get_event() == (None, None))
 	sch.put_event(1, Event("Alice", "Bob", 1000, 2, True))
 	sch.put_event(0, Event("Alice", "Bob", 2000, 2, True))
-	assert(sch.get_size() == 2)
+	assert(sch.get_num_events() == 2)
 	all_events = sch.get_all_events()
-	assert(sch.is_empty())
+	assert(sch.no_more_events())
 	assert(len(all_events) == 2)
 	time_1, event_1 = all_events[0]
 	time_2, event_2 = all_events[1]
@@ -58,33 +59,32 @@ def test_get_all_events():
 
 def test_event_same_sender_receiver():
 	# we don't include events into schedule with the same sender and receiver
-	sch = Schedule(duration=10)
-	sch.populate(
-		senders_list=["Alice"],
-		receivers_list=["Alice"],
+	sch = HonestSchedule(
+		end_time=10,
+		senders=["Alice"],
+		receivers=["Alice"],
 		amount_function=lambda: 1000,
-		desired_result=True,
+		desired_result_function=lambda: True,
 		payment_processing_delay_function=lambda: 1,
 		payment_generation_delay_function=lambda: 3)
-	assert(sch.is_empty())
+	assert(sch.no_more_events())
 
 
 def test_populate_schedule_with_one_event():
-	sch = Schedule(duration=0)
-	sch.populate(
-		senders_list=["Alice"],
-		receivers_list=["Bob"],
+	sch = HonestSchedule(
+		end_time=0,
+		senders=["Alice"],
+		receivers=["Bob"],
 		amount_function=lambda: 1000,
-		desired_result=True,
+		desired_result_function=lambda: True,
 		payment_processing_delay_function=lambda: 1,
 		payment_generation_delay_function=lambda: 3)
-	assert(sch.get_size() == 1)
+	assert(sch.get_num_events() == 1)
 
 
 def test_generate_honest_schedule():
-	h_sch = HonestSchedule(duration=0)
-	h_sch.populate(senders_list=["Alice"], receivers_list=["Bob"])
-	assert(h_sch.get_size() == 1)
+	h_sch = HonestSchedule(end_time=0, senders=["Alice"], receivers=["Bob"])
+	assert(h_sch.get_num_events() == 1)
 	time, event = h_sch.get_event()
 	assert(time == 0)
 	assert(event.sender == "Alice")
@@ -93,9 +93,8 @@ def test_generate_honest_schedule():
 
 
 def test_generate_jamming_schedule():
-	j_sch = JammingSchedule(duration=0)
-	j_sch.populate()
-	assert(j_sch.get_size() == 1)
+	j_sch = JammingSchedule(end_time=0)
+	assert(j_sch.get_num_events() == 1)
 	time, event = j_sch.get_event()
 	assert(time == 0)
 	assert(event.sender == "JammerSender")
@@ -103,10 +102,9 @@ def test_generate_jamming_schedule():
 	assert(event.desired_result is False)
 
 
-def test_generate_jamming_schedule_one_jam_per_each_of_hops():
-	j_sch = JammingSchedule(duration=0)
-	j_sch.populate(one_jam_per_each_of_hops=(("Alice", "Bob"), ("Charlie", "Dave")))
-	assert(j_sch.get_size() == 2)
+def test_generate_jamming_schedule_hop_to_jam_with_own_batch():
+	j_sch = JammingSchedule(end_time=0, hop_to_jam_with_own_batch=(("Alice", "Bob"), ("Charlie", "Dave")))
+	assert(j_sch.get_num_events() == 2)
 	all_events = j_sch.get_all_events()
 	times = [elem[0] for elem in all_events]
 	route_via = [elem[1].must_route_via_nodes for elem in all_events]

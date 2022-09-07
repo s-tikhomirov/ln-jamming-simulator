@@ -4,10 +4,9 @@ import json
 from direction import Direction
 from simulator import Simulator
 from event import Event
-from schedule import Schedule
+from schedule import GenericSchedule, HonestSchedule
 from lnmodel import LNModel
 from enumtypes import FeeType, ErrorType
-from params import honest_amount_function, honest_proccesing_delay_function, honest_generation_delay_function
 
 import logging
 logger = logging.getLogger(__name__)
@@ -17,13 +16,13 @@ TEST_SNAPSHOT_FILENAME = "./snapshots/listchannels_test.json"
 # We renamed Bob to Mary to test that everything works if route is not alphabetically ordered.
 # (We kept b_ variable names though.)
 
-DEFAULT_NUM_SLOTS = 2
+DEFAULT_NUM_SLOTS_PER_CHANNEL_IN_DIRECTION = 2
 
 
 def get_example_ln_model():
 	with open(TEST_SNAPSHOT_FILENAME, 'r') as snapshot_file:
 		snapshot_json = json.load(snapshot_file)
-	return LNModel(snapshot_json, default_num_slots=DEFAULT_NUM_SLOTS, no_balance_failures=True, keep_receiver_upfront_fee=True)
+	return LNModel(snapshot_json, default_num_slots_per_channel_in_direction=DEFAULT_NUM_SLOTS_PER_CHANNEL_IN_DIRECTION, no_balance_failures=True)
 
 
 def get_example_sim():
@@ -44,7 +43,7 @@ def test_no_routes():
 	with open(TEST_SNAPSHOT_FILENAME, 'r') as snapshot_file:
 		snapshot_json = json.load(snapshot_file)
 	del snapshot_json["channels"][1]
-	ln_model = LNModel(snapshot_json, default_num_slots=2, no_balance_failures=True, keep_receiver_upfront_fee=True)
+	ln_model = LNModel(snapshot_json, default_num_slots_per_channel_in_direction=2, no_balance_failures=True)
 	sim = Simulator(
 		ln_model,
 		target_hops=[("Alice", "Mary"), ("Charlie", "Dave")],
@@ -54,7 +53,7 @@ def test_no_routes():
 		max_num_routes_jamming=1,
 		num_runs_per_simulation=1,
 		subtract_last_hop_upfront_fee_for_honest_payments=False)
-	sch = Schedule(duration=1)
+	sch = GenericSchedule(end_time=1)
 	sch.put_event(0, Event("Alice", "Dave", 100, 7, False))
 	sch.put_event(0, Event("Alice", "Dave", 100, 7, True))
 	num_sent, num_failed, num_reached_receiver = sim.execute_schedule(sch)
@@ -71,7 +70,7 @@ def test_not_enough_attempts():
 		max_num_routes_jamming=1,
 		num_runs_per_simulation=1,
 		subtract_last_hop_upfront_fee_for_honest_payments=False)
-	sch = Schedule(duration=1)
+	sch = GenericSchedule(end_time=1)
 	sch.put_event(0, Event("Alice", "Dave", 100, 7, False))
 	num_sent, num_failed, num_reached_receiver = sim.execute_schedule(sch)
 	assert(num_sent == 1)
@@ -80,7 +79,7 @@ def test_not_enough_attempts():
 
 def test_jammer_jammed():
 	ln_model = get_example_ln_model()
-	ln_model.add_jammers_sending_channel(node="Alice", num_slots=1)
+	ln_model.add_jammers_channels(send_to_nodes=["Alice"], num_slots=1)
 	sim = Simulator(
 		ln_model,
 		target_hops=[("Charlie", "Dave")],
@@ -90,7 +89,7 @@ def test_jammer_jammed():
 		max_num_routes_jamming=1,
 		num_runs_per_simulation=1,
 		subtract_last_hop_upfront_fee_for_honest_payments=False)
-	sch = Schedule(duration=1)
+	sch = GenericSchedule(end_time=1)
 	sch.put_event(0, Event("JammerSender", "Dave", 100, 7, False))
 	num_sent, num_failed, num_reached_receiver = sim.execute_schedule(sch)
 	assert(num_sent == 2)
@@ -100,7 +99,7 @@ def test_jammer_jammed():
 
 def test_simulator_one_successful_payment():
 	sim = get_example_sim()
-	sch = Schedule(duration=10)
+	sch = GenericSchedule(end_time=10)
 	event = Event("Alice", "Dave", 100, 1, True)
 	sch.put_event(0, event)
 	num_sent, num_failed, num_reached_receiver = sim.execute_schedule(sch)
@@ -140,7 +139,7 @@ def test_simulator_one_successful_payment():
 
 def test_simulator_one_jam_batch():
 	sim = get_example_sim()
-	sch = Schedule(duration=1)
+	sch = GenericSchedule(end_time=1)
 	sch.put_event(0, Event("Alice", "Dave", 100, 7, False))
 	num_sent, num_failed, num_reached_receiver = sim.execute_schedule(sch)
 	assert(num_sent == 3)
@@ -180,7 +179,7 @@ def test_simulator_end_htlc_resolution():
 		max_num_routes_jamming=1,
 		num_runs_per_simulation=1,
 		subtract_last_hop_upfront_fee_for_honest_payments=False)
-	sch = Schedule(duration=10)
+	sch = GenericSchedule(end_time=10)
 	sch.put_event(0, Event("Alice", "Dave", 100, 5, True))
 	sch.put_event(0, Event("Alice", "Dave", 100, 15, True))
 	num_sent, num_failed, num_reached_receiver = sim.execute_schedule(sch)
@@ -226,14 +225,10 @@ def test_simulator_with_random_schedule():
 		max_num_routes_jamming=1,
 		num_runs_per_simulation=1,
 		subtract_last_hop_upfront_fee_for_honest_payments=False)
-	sch = Schedule(duration=60)
-	sch.populate(
-		senders_list=["Alice"],
-		receivers_list=["Dave"],
-		amount_function=honest_amount_function,
-		desired_result=True,
-		payment_processing_delay_function=honest_proccesing_delay_function,
-		payment_generation_delay_function=honest_generation_delay_function)
+	sch = HonestSchedule(
+		end_time=60,
+		senders=["Alice"],
+		receivers=["Dave"])
 	num_sent, num_failed, num_reached_receiver = sim.execute_schedule(sch)
 	assert(num_sent > 0)
 	assert_final_revenue_correctness(sim, num_sent)
@@ -251,10 +246,11 @@ def test_simulator_jamming():
 		max_num_routes_jamming=1,
 		num_runs_per_simulation=1,
 		subtract_last_hop_upfront_fee_for_honest_payments=False)
-	sim.ln_model.reset_slots("Alice", "Mary", num_slots=100)
-	sim.ln_model.reset_slots("Charlie", "Dave", num_slots=100)
+	for (x, y) in (("Alice", "Mary"), ("Charlie", "Dave")):
+		for ch in sim.ln_model.get_hop(x, y).get_all_channels():
+			ch.reset_slots_in_direction(Direction(x, y), num_slots=100)
 	duration = 10
-	sch = Schedule(duration)
+	sch = GenericSchedule(duration)
 	jam_processing_delay = 4
 	sch.put_event(0, Event("Alice", "Dave", 100, jam_processing_delay, False))
 	sim.target_node_pair = (("Mary", "Charlie"))
@@ -311,9 +307,6 @@ def assert_final_revenue_correctness(sim, num_sent):
 
 	# Dave is the receiver; his success-case revenue is zero by construction
 	assert(d_rev_success == 0)
-	# Upfront fee amount has been subtracted at payment construction,
-	# but in this test we keep it (keep_receiver_upfront_fee=True)
-	# to later assert that the sum of all fees is zero.
 	assert(d_rev_upfront >= 0)
 
 
@@ -345,10 +338,9 @@ def test_error_response_honest():
 		num_runs_per_simulation=1,
 		subtract_last_hop_upfront_fee_for_honest_payments=False)
 	# an honest payment gets retried multiple times but still fails
-	sim.ln_model.get_hop("Mary", "Charlie").set_deliberate_failure_behavior_for_all_in_direction(
-		direction=(Direction("Mary", "Charlie")),
-		prob=1)
-	sch = Schedule()
+	for ch in sim.ln_model.get_hop("Mary", "Charlie").get_all_channels():
+		ch.set_deliberate_failure_behavior_in_direction(Direction("Mary", "Charlie"), prob=1)
+	sch = GenericSchedule()
 	event = Event("Alice", "Dave", 100, 1, True)
 	sch.put_event(0, event)
 	max_num_attempts_per_route_honest = 5
@@ -369,15 +361,14 @@ def test_error_response_jamming():
 		max_num_routes_jamming=1,
 		num_runs_per_simulation=1,
 		subtract_last_hop_upfront_fee_for_honest_payments=False)
-	sim.ln_model.get_hop("Mary", "Charlie").set_deliberate_failure_behavior_for_all_in_direction(
-		direction=(Direction("Mary", "Charlie")),
-		prob=1,
-		spoofing_error_type=ErrorType.LOW_BALANCE)
-	sim.ln_model.reset_slots("Alice", "Mary", num_slots=100)
-	sim.ln_model.reset_slots("Charlie", "Dave", num_slots=100)
+	for ch in sim.ln_model.get_hop("Mary", "Charlie").get_all_channels():
+		ch.set_deliberate_failure_behavior_in_direction(Direction("Mary", "Charlie"), prob=1, spoofing_error_type=ErrorType.LOW_BALANCE)
+	for (x, y) in (("Alice", "Mary"), ("Charlie", "Dave")):
+		for ch in sim.ln_model.get_hop(x, y).get_all_channels():
+			ch.reset_slots_in_direction(Direction(x, y), num_slots=100)
 	simulation_duration = 4
 	max_num_attempts_per_route_jamming = 10
-	sch = Schedule(simulation_duration)
+	sch = GenericSchedule(simulation_duration)
 	sim.target_node_pair = (("Mary", "Charlie"))
 	sim.max_num_attempts_per_route_jamming = max_num_attempts_per_route_jamming
 	jam_processing_delay = 4

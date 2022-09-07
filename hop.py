@@ -1,5 +1,4 @@
-from enumtypes import ErrorType
-from utils import generate_id
+from functools import partial
 
 import logging
 logger = logging.getLogger(__name__)
@@ -10,61 +9,56 @@ class Hop:
 	def __init__(self):
 		self.channels = {}
 
-	def add_channel(self, channel, cid):
-		cid = cid if cid is not None else generate_id()
-		assert(cid not in self.channels)
+	def has_channel(self, cid):
+		return cid in self.channels
+
+	def add_channel(self, channel):
+		cid = channel.get_cid()
+		assert not self.has_channel(cid)
 		self.channels[cid] = channel
 
+	def get_num_channels(self):
+		return len(self.channels)
+
 	def get_channel(self, cid):
-		if cid not in self.channels:
+		if not self.has_channel(cid):
 			return None
 		return self.channels[cid]
 
-	def get_cids(self):
-		return list(self.channels.keys())
+	def get_all_channels(self):
+		return self.channels.values()
 
-	def get_channels(self):
-		return list(self.channels.values())
+	def get_channels_with_condition(self, condition=lambda ch: True, sorting_function=lambda ch: 0):
+		return sorted([ch for ch in self.get_all_channels() if condition(ch)], key=sorting_function)
 
-	def get_num_cids(self):
-		return len(self.channels)
+	def get_cheapest_channel_really_can_forward(self, direction, time, amount):
+		# A channel REALLY can forward if it has enough capacity and is NOT JAMMED
+		channels = self.get_channels_with_condition(
+			condition=lambda ch: ch.really_can_forward_in_direction_at_time(direction, time, amount))
+		return channels[0] if channels else None
 
-	def get_cids_enabled_in_direction(self, direction):
-		return [cid for cid in self.channels if self.channels[cid].is_enabled_in_direction(direction)]
+	def get_cheapest_channel_maybe_can_forward(self, direction, amount):
+		# A channel MAYBE can forward if it has enough capacity, but jamming status is not checked
+		channels = self.get_channels_with_condition(
+			condition=lambda ch: ch.maybe_can_forward_in_direction_at_time(direction, amount))
+		return channels[0] if channels else None
 
-	def get_cids_can_forward(self, amount, direction):
-		return [cid for cid in self.get_cids_enabled_in_direction(direction) if self.channels[cid].can_forward_in_direction(direction, amount)]
+	def really_can_forward_in_direction_at_time(self, direction, time, amount):
+		return any(ch.really_can_forward_in_direction_at_time(direction, time, amount) for ch in self.get_all_channels())
 
-	def get_cids_can_forward_by_fee(self, amount, direction):
-		return sorted(
-			self.get_cids_can_forward(amount, direction),
-			key=lambda cid: self.channels[cid].get_total_fee_in_direction(direction, amount))
+	def can_forward(self, direction, time):
+		# Can forward at least some amount (i.e., has a slot)
+		return self.really_can_forward_in_direction_at_time(direction, time, amount=0)
 
-	def get_cheapest_cid(self, amount, direction):
-		cids_sorted = self.get_cids_can_forward_by_fee(amount, direction)
-		logger.debug(f"All cids in this hop: {self.get_cids()}")
-		logger.debug(f"Channels: {self.get_channels()}")
-		logger.debug(f"{cids_sorted} for amount {amount} in direction {direction}")
-		return cids_sorted[0] if cids_sorted else None
-
-	def has_cid(self, cid):
-		return cid in self.channels
-
-	def set_deliberate_failure_behavior_for_all_in_direction(self, direction, prob, spoofing_error_type=ErrorType.FAILED_DELIBERATELY):
-		for cid, ch in self.channels.items():
-			ch.set_deliberate_failure_behavior_in_direction(direction, prob, spoofing_error_type)
-
-	def has_available_channel_in_direction(self, direction, time):
-		return any(ch.is_available_in_direction_at_time(direction, time) for ch in self.channels.values())
-
-	def all_channels_are_jammed_in_direction(self, direction, time):
-		return not self.has_available_channel_in_direction(direction, time)
-
-	def get_jammed_status(self, direction, time):
-		return (self.all_channels_are_jammed_in_direction(direction, time), self.get_total_num_slots_occupied_in_direction(direction))
+	def cannot_forward(self, direction, time):
+		# Cannot forward even zero amount (i.e., ANY amount)
+		return not self.can_forward(direction, time)
 
 	def get_total_num_slots_occupied_in_direction(self, direction):
-		return sum(ch.get_num_slots_occupied_in_direction(direction) for ch in self.channels.values())
+		return sum(ch.get_num_slots_occupied_in_direction(direction) for ch in self.get_all_channels())
+
+	def get_jammed_status(self, direction, time):
+		return (self.cannot_forward(direction, time), self.get_total_num_slots_occupied_in_direction(direction))
 
 	def __repr__(self):  # pragma no cover
 		s = "Hop with properties:"

@@ -20,9 +20,9 @@ class Direction:
 	def __repr__(self):
 		assert(self == Direction.Alph or self == Direction.NonAlph)
 		if self == Direction.Alph:
-			return "Alphabetical"
+			return "Alph"
 		elif self == Direction.NonAlph:
-			return "NonAlphabetical"
+			return "NonAlph"
 
 
 Direction.Alph = Direction("a", "b")

@@ -13,13 +13,13 @@ logger = logging.getLogger(__name__)
 
 WHEEL_SNAPSHOT_FILENAME = "./snapshots/listchannels_wheel.json"
 
-DEFAULT_NUM_SLOTS = 5
+DEFAULT_NUM_SLOTS_PER_CHANNEL_IN_DIRECTION = 5
 
 
 def get_example_ln_model():
 	with open(WHEEL_SNAPSHOT_FILENAME, 'r') as snapshot_file:
 		snapshot_json = json.load(snapshot_file)
-	return LNModel(snapshot_json, default_num_slots=DEFAULT_NUM_SLOTS, no_balance_failures=True, keep_receiver_upfront_fee=True)
+	return LNModel(snapshot_json, default_num_slots_per_channel_in_direction=DEFAULT_NUM_SLOTS_PER_CHANNEL_IN_DIRECTION, no_balance_failures=True)
 
 
 @pytest.fixture
@@ -47,19 +47,20 @@ def test_simulator_jamming_schedule(example_sim):
 	duration = 1
 
 	def schedule_generation_function_jamming():
-		sch = JammingSchedule(duration=duration)
-		sch.populate(target_hops)
-		return sch
+		j_sch = JammingSchedule(
+			end_time=duration,
+			hop_to_jam_with_own_batch=target_hops)
+		return j_sch
 	simulator = example_sim
 	simulator.target_hops = target_hops
 	simulator.max_num_routes_jamming = 10
 	# we need an odd number of slots to test this behavior
 	# i.e.: unjammed slot in two-loop route failed at the second loop
-	assert(simulator.ln_model.default_num_slots % 2 == 1)
+	assert(simulator.ln_model.default_num_slots_per_channel_in_direction % 2 == 1)
 	simulator.ln_model.add_jammers_channels(
 		send_to_nodes=["Alice", "Charlie", "Hub"],
 		receive_from_nodes=["Dave", "Hub"],
-		num_slots=(DEFAULT_NUM_SLOTS + 1) * len(target_hops))
+		num_slots=(DEFAULT_NUM_SLOTS_PER_CHANNEL_IN_DIRECTION + 1) * len(target_hops))
 	results = simulator.run_simulation_series(
 		schedule_generation_function_jamming,
 		upfront_base_coeff_range=[0.001],
@@ -72,12 +73,12 @@ def test_simulator_jamming_schedule(example_sim):
 def test_simulator_honest_schedule(example_sim):
 
 	def schedule_generation_function_honest():
-		sch = HonestSchedule(duration=300)
-		sch.populate(
-			senders_list=["Alice"],
-			receivers_list=["Bob"],
+		h_sch = HonestSchedule(
+			end_time=300,
+			senders=["Alice"],
+			receivers=["Bob"],
 			must_route_via_nodes=["Hub"])
-		return sch
+		return h_sch
 	simulator = example_sim
 	results = simulator.run_simulation_series(
 		schedule_generation_function_honest,
@@ -99,12 +100,10 @@ def test_simulator_honest_schedule(example_sim):
 		assert(revenues["Charlie"] == 0)
 		assert(revenues["Dave"] == 0)
 		assert(revenues["Hub"] > 0)
-		if not simulator.ln_model.keep_receiver_upfront_fee or (
-			res["upfront_base_coeff"] == 0 and res["upfront_rate_coeff"] == 0):
+		if res["upfront_base_coeff"] == 0 and res["upfront_rate_coeff"] == 0:
 			assert(revenues["Bob"] == 0)
-		if simulator.ln_model.keep_receiver_upfront_fee:
-			if res["upfront_base_coeff"] > 0 or res["upfront_rate_coeff"] > 0:
-				assert(revenues["Bob"] > 0)
+		if res["upfront_base_coeff"] > 0 or res["upfront_rate_coeff"] > 0:
+			assert(revenues["Bob"] > 0)
 
 
 def test_simulator_jamming_fixed_route(example_sim):
@@ -112,16 +111,15 @@ def test_simulator_jamming_fixed_route(example_sim):
 	duration = 8
 
 	def schedule_generation_function_jamming():
-		sch = JammingSchedule(duration=duration)
-		sch.populate()
-		return sch
+		j_sch = JammingSchedule(end_time=duration)
+		return j_sch
 	simulator = example_sim
 	simulator.target_hops = target_hops
 	simulator.jammer_must_route_via_nodes = ["Alice", "Hub", "Dave"]
 	simulator.ln_model.add_jammers_channels(
 		send_to_nodes=["Alice"],
 		receive_from_nodes=["Dave"],
-		num_slots=(DEFAULT_NUM_SLOTS + 1) * len(target_hops))
+		num_slots=(DEFAULT_NUM_SLOTS_PER_CHANNEL_IN_DIRECTION + 1) * len(target_hops))
 	results = simulator.run_simulation_series(
 		schedule_generation_function_jamming,
 		upfront_base_coeff_range=[0],
@@ -132,7 +130,7 @@ def test_simulator_jamming_fixed_route(example_sim):
 def assert_jam_results_correctness(simulator, duration, results):
 	# the number of jams is constant and pre-determined if no_balance_failures is True
 	expected_num_jam_batches = int(ceil(duration / PaymentFlowParams["JAM_DELAY"]))
-	expected_num_jams = expected_num_jam_batches * (simulator.ln_model.default_num_slots + 1)
+	expected_num_jams = expected_num_jam_batches * (simulator.ln_model.default_num_slots_per_channel_in_direction + 1)
 	for res in results:
 		stats = res["stats"]
 		revenues = res["revenues"]
@@ -142,6 +140,5 @@ def assert_jam_results_correctness(simulator, duration, results):
 			assert(stats["num_sent"] == expected_num_jams)
 		else:
 			assert(stats["num_sent"] >= expected_num_jams)
-		if not simulator.ln_model.keep_receiver_upfront_fee or (
-			res["upfront_base_coeff"] == 0 and res["upfront_rate_coeff"] == 0):
+		if res["upfront_base_coeff"] == 0 and res["upfront_rate_coeff"] == 0:
 			assert(revenues["Dave"] == 0)

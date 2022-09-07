@@ -56,7 +56,7 @@ def main():
 		help="Success-case fee rate per million (same for all channels)."
 	)
 	parser.add_argument(
-		"--default_num_slots",
+		"--default_num_slots_per_channel_in_direction",
 		default=ProtocolParams["NUM_SLOTS"],
 		type=int,
 		help="Number of slots for honest channels (attackes has twice as many)."
@@ -91,13 +91,6 @@ def main():
 		default=False,
 		action="store_true",
 		help="Never fail payments because of low capacity."
-	)
-	parser.add_argument(
-		"--keep_receiver_upfront_fee",
-		dest="keep_receiver_upfront_fee",
-		default=True,
-		action="store_true",
-		help="Separately account for receiver's upfront fee (even if it had been subtracted from payment amount)."
 	)
 	parser.add_argument(
 		"--upfront_base_coeff_range",
@@ -179,9 +172,8 @@ def main():
 			snapshot_json = json.load(snapshot_file)
 		ln_model = LNModel(
 			snapshot_json,
-			args.default_num_slots,
-			args.no_balance_failures,
-			args.keep_receiver_upfront_fee)
+			args.default_num_slots_per_channel_in_direction,
+			args.no_balance_failures)
 
 		# set honest senders and receivers
 		assert((honest_senders is None) == (honest_receivers is None))
@@ -223,7 +215,7 @@ def main():
 		# open jammer's channels
 		assert((jammer_sends_to_nodes is None) == (jammer_receives_from_nodes is None))
 		jammer_opens_channels_to_all_targets = jammer_sends_to_nodes is None
-		jammer_num_slots = len(target_hops) * (args.default_num_slots + 1)
+		jammer_num_slots = len(target_hops) * (args.default_num_slots_per_channel_in_direction + 1)
 		if jammer_opens_channels_to_all_targets:
 			logger.info(f"Jammer opens channels to and from all target hops")
 			jammer_sends_to = [hop[0] for hop in target_hops]
@@ -257,9 +249,8 @@ def main():
 		logger.info("Starting jamming simulations")
 
 		def schedule_generation_function_jamming():
-			sch = JammingSchedule(duration=args.simulation_duration)
-			sch.populate()
-			return sch
+			j_sch = JammingSchedule(end_time=args.simulation_duration)
+			return j_sch
 
 		results_jamming = simulator.run_simulation_series(
 			schedule_generation_function_jamming,
@@ -269,12 +260,12 @@ def main():
 		logger.info("Starting honest simulations")
 
 		def schedule_generation_function_honest():
-			sch = HonestSchedule(duration=args.simulation_duration)
-			sch.populate(
-				senders_list=honest_senders,
-				receivers_list=honest_receivers,
+			h_sch = HonestSchedule(
+				end_time=args.simulation_duration,
+				senders=honest_senders,
+				receivers=honest_receivers,
 				must_route_via_nodes=honest_must_route_via_nodes)
-			return sch
+			return h_sch
 
 		results_honest = simulator.run_simulation_series(
 			schedule_generation_function_honest,
@@ -297,8 +288,7 @@ def main():
 				"success_base_fee": args.success_base_fee,
 				"success_fee_rate": args.success_fee_rate,
 				"no_balance_failures": args.no_balance_failures,
-				"keep_receiver_upfront_fee": args.keep_receiver_upfront_fee,
-				"default_num_slots": args.default_num_slots,
+				"default_num_slots_per_channel_in_direction": args.default_num_slots_per_channel_in_direction,
 				"max_num_attempts_per_route_honest": args.max_num_attempts_honest,
 				"max_num_attempts_per_route_jamming": args.max_num_attempts_jamming,
 				"dust_limit": ProtocolParams["DUST_LIMIT"],

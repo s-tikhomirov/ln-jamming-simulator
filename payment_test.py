@@ -37,7 +37,7 @@ def test_manual_payment_creation(example_payment_upfront_fee_function, example_p
 		success_fee_function=example_payment_success_fee_function,
 		desired_result=True,
 		processing_delay=1,
-		receiver_amount=100)
+		last_hop_body=100)
 	p_bc = Payment(p_cd, "Charlie", example_payment_upfront_fee_function, example_payment_success_fee_function)
 	p_ab = Payment(p_bc, "Bob", example_payment_upfront_fee_function, example_payment_success_fee_function)
 	for p in [p_ab, p_bc, p_cd]:
@@ -100,9 +100,8 @@ def example_snapshot_json():
 def example_ln_model(example_snapshot_json):
 	return LNModel(
 		example_snapshot_json,
-		default_num_slots=2,
-		no_balance_failures=True,
-		keep_receiver_upfront_fee=True)
+		default_num_slots_per_channel_in_direction=2,
+		no_balance_failures=True)
 
 
 def test_route_payment_creation(example_ln_model):
@@ -121,14 +120,12 @@ def test_route_payment_creation(example_ln_model):
 		desired_result=True)
 	dsp = p.downstream_payment
 	ddsp = dsp.downstream_payment
-	assert(p.amount == 130.5)
 	assert(p.success_fee == 20.5)
 	assert(p.body == 110)
 	assert(isclose(p.upfront_fee, 12.81))
-	assert(dsp.amount == 110)
 	assert(dsp.body == 100)
 	assert(dsp.success_fee == 10)
 	assert(dsp.upfront_fee == 8.2)
-	assert(ddsp.amount == ddsp.body == 100)
+	assert(ddsp.body == 100)
 	assert(ddsp.success_fee == 0)
 	assert(ddsp.upfront_fee == 4)

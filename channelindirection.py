@@ -71,16 +71,18 @@ class ChannelInDirection:
 		if num_slots is not None:
 			assert num_slots > 0
 			self.num_slots = num_slots
+		else:
+			assert self.num_slots is not None
 		self.slots = PriorityQueue(maxsize=self.num_slots)
 
-	def is_full(self):
+	def all_slots_busy(self):
 		return self.slots.full()
 
-	def is_empty(self):
+	def all_slots_free(self):
 		return self.slots.empty()
 
 	def is_jammed(self, time):
-		return self.is_full() and self.get_top_timestamp() > time
+		return self.all_slots_busy() and self.get_top_timestamp() > time
 
 	def get_num_slots(self):
 		return self.num_slots
@@ -93,7 +95,7 @@ class ChannelInDirection:
 		return self.get_num_slots() - self.get_num_slots_occupied()
 
 	def get_top_timestamp(self):
-		assert not self.is_empty()
+		assert not self.all_slots_free()
 		return self.slots.queue[0][0]
 
 	def get_total_fee(self, amount):
@@ -101,24 +103,25 @@ class ChannelInDirection:
 		upfront_fee = self.upfront_fee_function(amount + success_fee)
 		return success_fee + upfront_fee
 
-	def get_htlc(self):
-		assert not self.is_empty()
-		resolution_time, released_htlc = self.slots.get_nowait()
-		return resolution_time, released_htlc
+	def pop_htlc(self):
+		assert not self.all_slots_free()
+		resolution_time, htlc = self.slots.get_nowait()
+		return resolution_time, htlc
 
-	def store_htlc(self, resolution_time, in_flight_htlc):
+	def push_htlc(self, resolution_time, in_flight_htlc):
 		# Store an in-flight HTLC in the slots queue.
 		# The queue must not be full!
-		# (We must have called ensure_free_slot() earlier.)
-		assert not self.is_full()
+		# We must have ensured a free slot earlier.
+		assert not self.all_slots_busy()
 		self.slots.put_nowait((resolution_time, in_flight_htlc))
 
-	def ensure_free_slot(self, time, num_slots_needed=1):
+	def ensure_free_slots(self, time, num_slots_needed):
+		# TODO: do we ever need to ensure more than one slot at a time?
 		# Ensure there are num_slots_needed free slots.
 		# If the queue is full, check the timestamp of the earliest in-flight HTLC.
 		# If it is in the past, pop the HTLC (so it can be resolved).
 		# Return True / False and the released HTLC, if any, with its timestamp.
-		success, released_htlcs = False, []
+		success, htlcs = False, []
 		num_free_slots = self.get_num_slots_free()
 		if num_free_slots >= num_slots_needed:
 			# we have enough free slots without needing to release any HTLCs
@@ -129,17 +132,20 @@ class ChannelInDirection:
 				# Non-strict inequlity: we do resolve HTLCs that expire exactly now
 				if self.get_top_timestamp() <= time:
 					# free a slot by popping an outdated HTLC
-					released_htlcs.append(self.get_htlc())
+					htlcs.append(self.pop_htlc())
 					success = True
 				else:
 					# no more outdated HTLCs
 					success = False
 			if not success:
 				# push back the released HTLCs if we couldn't pop enough of them
-				for resolution_time, released_htlc in released_htlcs:
-					self.store_htlc(resolution_time, released_htlc)
-				released_htlcs = []
-		return success, released_htlcs
+				for resolution_time, htlc in htlcs:
+					self.push_htlc(resolution_time, htlc)
+				htlcs = []
+		return success, htlcs
+
+	def ensure_free_slot(self, time):
+		return self.ensure_free_slots(time, num_slots_needed=1)
 
 	def set_deliberate_failure_behavior(self, prob, spoofing_error_type=ErrorType.FAILED_DELIBERATELY):
 		self.deliberately_fail_prob = prob
@@ -149,5 +155,5 @@ class ChannelInDirection:
 		s = "\nChannelInDirection with properties:"
 		s += "\nslots (busy / total):	" + str(self.get_num_slots_occupied())
 		s += " / " + str(self.get_num_slots())
-		s += "\nslots full?	" + str(self.is_full())
+		s += "\nslots full?	" + str(self.all_slots_busy())
 		return s

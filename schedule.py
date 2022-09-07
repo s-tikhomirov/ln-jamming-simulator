@@ -13,64 +13,17 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-class Schedule:
+class GenericSchedule:
 	'''
 		A schedule of Events (to-be payments) to be executed by a Simulator.
 	'''
 
-	def __init__(self, duration=0):
-		'''
-		- duration
-			A timestamp at which to stop Schedule generation.
-			Note: this is not the same as the timestamp of the last Event.
-			(E.g., for duration 30, the last event may be at timestamp 28.)
-		'''
+	def __init__(self, end_time=0):
+		self.end_time = end_time
 		self.schedule = PriorityQueue()
-		self.end_time = duration
 
-	def populate(
-		self,
-		senders_list,
-		receivers_list,
-		amount_function,
-		desired_result,
-		payment_processing_delay_function,
-		payment_generation_delay_function,
-		must_route_via_nodes=[],
-		enforce_dust_limit=False):
-		'''
-			- senders_list
-				Pick a sender uniformly from this list.
-
-			- receivers_list
-				Pick a receiver uniformly from this list.
-
-			- amount_function
-				A function to generate each next payment amount.
-
-			- payment_processing_delay_function
-				A function to generate each next processing delay (encoded within the payment).
-
-			- payment_generation_delay_function
-				A function to generate a delay until the next Event in the Schedule.
-		'''
-		t = 0
-		while t <= self.end_time:
-			sender = choice(senders_list)
-			receiver = choice(receivers_list)
-			amount = amount_function()
-			if sender != receiver and (amount >= ProtocolParams["DUST_LIMIT"] or not enforce_dust_limit):
-				# whether to exclude last-hop upfront fee from amount or not,
-				# is decided on Payment construction stage later
-				processing_delay = payment_processing_delay_function()
-				event = Event(sender, receiver, amount, processing_delay, desired_result, must_route_via_nodes)
-				self.put_event(t, event)
-			t += payment_generation_delay_function()
-
-	def put_event(self, event_time, event, current_time=-1):
-		# prevent inserting events from the past
-		assert(current_time < event_time)
-		self.schedule.put_nowait((event_time, event))
+	def get_num_events(self):
+		return self.schedule.qsize()
 
 	def get_event(self):
 		# return event time and the event itself
@@ -80,66 +33,97 @@ class Schedule:
 		return time, event
 
 	def get_all_events(self):
-		# Only used for debugging.
-		# Note: this clears the queue!
+		# Only used for debugging. Note: this clears the queue!
 		timed_events = []
 		while not self.schedule.empty():
 			time, event = self.schedule.get_nowait()
 			timed_events.append((time, event))
 		return timed_events
 
-	def get_size(self):
-		return self.schedule.qsize()
-
-	def is_empty(self):
+	def no_more_events(self):
 		return self.schedule.empty()
+
+	def put_event(self, event_time, event, current_time=-1):
+		# prohibit inserting events into the past or after end time
+		assert current_time < event_time <= self.end_time
+		self.schedule.put_nowait((event_time, event))
 
 	def __repr__(self):  # pragma: no cover
 		s = "\nSchedule:\n"
-		s += "\n".join([str(str(e[0]) + "	" + str(e[1])) for e in self.get_all_events()])
+		s += "\n".join([str(str(time) + "	" + str(event)) for (time, event) in self.get_all_events()])
 		return s
 
 
-class HonestSchedule(Schedule):
+class HonestSchedule(GenericSchedule):
 
-	def __init__(self, duration=0):
-		Schedule.__init__(self, duration)
+	def __init__(
+		self,
+		end_time,
+		senders,
+		receivers,
+		amount_function=honest_amount_function,
+		desired_result_function=lambda: True,
+		payment_processing_delay_function=honest_proccesing_delay_function,
+		payment_generation_delay_function=honest_generation_delay_function,
+		must_route_via_nodes=[]):
+		'''
+			- senders
+				A list of possible senders.
 
-	def populate(self, senders_list, receivers_list, must_route_via_nodes=[]):
-		Schedule.populate(
-			self,
-			senders_list=senders_list,
-			receivers_list=receivers_list,
-			amount_function=honest_amount_function,
-			desired_result=True,
-			payment_processing_delay_function=honest_proccesing_delay_function,
-			payment_generation_delay_function=honest_generation_delay_function,
-			must_route_via_nodes=must_route_via_nodes)
+			- receivers
+				A list of possible receivers.
+
+			- amount_function
+				Generate the payment amount.
+
+			- desired_result_function
+				Generate the desired result (True for honest payments, False for jams).
+
+			- payment_processing_delay_function
+				Generate the processing delay (encoded within the payment).
+
+			- payment_generation_delay_function
+				Generate the delay until the next Event in the Schedule.
+
+			- must_route_via_nodes
+				A tuple of (consecutive) nodes that the payment must be routed through.
+		'''
+		GenericSchedule.__init__(self, end_time)
+		t = 0
+		while t <= self.end_time:
+			sender = choice(senders)
+			receiver = choice(receivers)
+			amount = amount_function()
+			if sender != receiver:
+				# whether to exclude last-hop upfront fee from amount or not,
+				# is decided on Payment construction stage later
+				processing_delay = payment_processing_delay_function()
+				desired_result = desired_result_function()
+				event = Event(sender, receiver, amount, processing_delay, desired_result, must_route_via_nodes)
+				self.put_event(t, event)
+			t += payment_generation_delay_function()
 
 
-class JammingSchedule(Schedule):
+class JammingSchedule(GenericSchedule):
 
-	def __init__(self, duration=0):
-		Schedule.__init__(self, duration)
-
-	def populate(self, one_jam_per_each_of_hops=[], sender="JammerSender", receiver="JammerReceiver"):
-		# sender and receiver are "JammerSender" and "JammerReceiver"
-		# generate a jamming schedule that assumes that the jammer connects
-		# to ALL target nodes (JammerSender->A and B->JammerReceiver)
-		# for all directed target edges (A,B)
+	def __init__(
+		self,
+		end_time,
+		jam_sender="JammerSender",
+		jam_receiver="JammerReceiver",
+		hop_to_jam_with_own_batch=[]):
+		GenericSchedule.__init__(self, end_time)
 		jam_amount = ProtocolParams["DUST_LIMIT"]
 		jam_delay = PaymentFlowParams["JAM_DELAY"]
-		jam_sender = sender
-		jam_receiver = receiver
-		if one_jam_per_each_of_hops:
-			for target_hop in one_jam_per_each_of_hops:
+		if hop_to_jam_with_own_batch:
+			for hop in hop_to_jam_with_own_batch:
 				initial_jam = Event(
 					sender=jam_sender,
 					receiver=jam_receiver,
 					amount=jam_amount,
 					processing_delay=jam_delay,
 					desired_result=False,
-					must_route_via_nodes=target_hop)
+					must_route_via_nodes=hop)
 				self.put_event(0, initial_jam)
 		else:
 			initial_jam = Event(

@@ -129,12 +129,16 @@ class Simulator:
 			revenues[node] = mean(tmp_revenues[node])
 		return stats, revenues
 
-	def execute_schedule(self, schedule):
-		self.ln_model.reset_all_slots_and_revenues()
+	def reset(self):
+		self.ln_model.reset_all_slots()
+		self.ln_model.reset_all_revenues()
 		self.now = -1
-		self.schedule = schedule
 		self.num_sent_total, self.num_failed_total, self.num_reached_receiver_total = 0, 0, 0
-		while not self.schedule.is_empty():
+
+	def execute_schedule(self, schedule):
+		self.reset()
+		self.schedule = schedule
+		while not self.schedule.no_more_events():
 			new_time, event = self.schedule.get_event()
 			if new_time > self.now:
 				logger.debug(f"Current time: {new_time}")
@@ -151,12 +155,14 @@ class Simulator:
 				else:
 					self.handle_jam_with_router(event)
 				next_batch_time = self.now + event.processing_delay
+				if next_batch_time > self.schedule.end_time:
+					break
 				logger.debug(f"Moving to the next jam batch")
 				logger.debug(f"Pushing jam {event} into schedule for time {next_batch_time}")
 				self.schedule.put_event(next_batch_time, event)
 			else:
 				self.handle_honest_payment(event)
-		if self.schedule.is_empty():
+		if self.schedule.no_more_events():
 			logger.info(f"Depleted the schedule with end time {self.schedule.end_time}, last event was at {self.now}")
 		else:
 			logger.info(f"Reached schedule end time {self.schedule.end_time}, last event was at {self.now}")
@@ -185,7 +191,15 @@ class Simulator:
 		logger.debug(f"Jammed hop {jammed_hop}")
 
 	def all_target_hops_are_really_jammed(self):
-		return all(self.ln_model.hop_is_jammed(hop, self.now) for hop in self.target_hops)
+		return all(self.ln_model.get_hop(*hop).cannot_forward(Direction(*hop), self.now) for hop in self.target_hops)
+
+	def get_jammed_status_of_hops(self, hops):
+		return [
+			(
+				Router.shorten_ids(hop),
+				self.ln_model.get_hop(*hop).cannot_forward(Direction(*hop), self.now),
+				self.ln_model.get_hop(*hop).get_total_num_slots_occupied_in_direction(Direction.Alph)
+			) for hop in hops]
 
 	def handle_jam_with_router(self, event):
 		max_num_routes = self.max_num_routes_jamming
@@ -238,13 +252,19 @@ class Simulator:
 			else:
 				logger.debug(f"All jams reached receiver for route {route}")
 				#logger.debug(f"Allow for more attempts per route (now at {self.max_num_attempts_per_route_jamming})!")
-				target_hops_unjammed_in_this_route = [hop for hop in Router.get_hops(route) if hop in self.target_hops and not self.ln_model.hop_is_jammed(hop, self.now)]
-				logger.debug(f"Target hops status: {[(Router.shorten_ids(hop), self.ln_model.get_hop(*hop).get_jammed_status(Direction(*hop), self.now)) for hop in target_hops_unjammed_in_this_route]}")
-			logger.debug(f"Target hops jammed status: {[(hop, self.ln_model.get_hop(*hop).get_jammed_status(Direction(*hop), self.now)) for hop in self.target_hops]}")
+				target_hops_unjammed_in_this_route = [hop for hop in Router.get_hops(route) if (
+					hop in self.target_hops
+					and self.ln_model.get_hop(*hop).can_forward(Direction(*hop), self.now)
+				)]
+				logger.debug(f"Target hops unjammed in this route: {self.get_jammed_status_of_hops(target_hops_unjammed_in_this_route)}")
+			logger.debug(f"All target hops jammed status: {self.get_jammed_status_of_hops(self.target_hops)}")
 		if not self.all_target_hops_are_really_jammed():
-			target_hops_left_unjammed = [hop for hop in self.target_hops if not self.ln_model.hop_is_jammed(hop, self.now)]
+			target_hops_left_unjammed = [hop for hop in self.target_hops if (
+				self.ln_model.get_hop(*hop).can_forward(Direction(*hop), self.now)
+			)]
 			# sic! num_routes, not (num_routes + 1): though we start at zero, we count the last interation which breaks before producing a route
 			logger.warning(f"Couldn't jam {len(target_hops_left_unjammed)} target hops after {num_route} routes at time {self.now}.")
+			logger.warning(f"Unjammed target hops: {self.get_jammed_status_of_hops(target_hops_left_unjammed)}")
 		else:
 			logger.info(f"All target hops are jammed at time {self.now}")
 
@@ -330,27 +350,26 @@ class Simulator:
 					logger.debug(f"Honest payment reached receiver at route {num_route + 1}, no need to try further routes")
 					break
 
+	def adjust_body_for_route(self, route, amount):
+		assert len(route) >= 2
+		pre_receiver, receiver = route[-2], route[-1]
+		logger.debug(f"Adjusting payment body for the last hop {pre_receiver}-{receiver}")
+		chosen_ch = self.ln_model.get_hop(pre_receiver, receiver).get_cheapest_channel_maybe_can_forward(
+			Direction(pre_receiver, receiver),
+			amount)
+		chosen_cid = chosen_ch.get_cid()
+		logger.debug(f"Chosen cheapest channel for payment body adjustment: {chosen_cid}")
+		chosen_ch_in_dir = chosen_ch.in_direction(Direction(pre_receiver, receiver))
+		return Simulator.body_for_amount(amount, chosen_ch_in_dir.upfront_fee_function)
+
 	def send_honest_payment_via_route(self, event, route):
-		assert(event.desired_result is True)
-		if not self.subtract_last_hop_upfront_fee_for_honest_payments:
-			receiver_amount = event.amount
+		assert event.desired_result is True
+		if self.subtract_last_hop_upfront_fee_for_honest_payments:
+			last_hop_body = self.adjust_body_for_route(route, event.amount)
 		else:
-			logger.debug(f"Subtracting last-hop upfront fee from amount {event.amount}")
-			pre_receiver, receiver = route[-2], route[-1]
-			logger.debug(f"Pre-receiver, receiver: {pre_receiver} {receiver} ")
-			chosen_cid = self.ln_model.get_cheapest_cid_in_hop(pre_receiver, receiver, event.amount)
-			logger.debug(f"Suggested cheapest cid: {chosen_cid}")
-			hop = self.ln_model.get_hop(pre_receiver, receiver)
-			logger.debug(f"Hop of this cid: {hop}")
-			channel = hop.get_channel(chosen_cid)
-			logger.debug(f"Channel of chosen cid {chosen_cid}: {channel}")
-			direction = Direction(pre_receiver, receiver)
-			logger.debug(f"We need direction {direction}")
-			chosen_ch_in_dir = channel.in_direction[direction]
-			chosen_ch_in_dir = self.ln_model.get_hop(receiver, pre_receiver).get_channel(chosen_cid).in_direction[direction]
-			receiver_amount = Simulator.body_for_amount(event.amount, chosen_ch_in_dir.upfront_fee_function)
-		logger.debug(f"Receiver will get {receiver_amount} in payment body")
-		p = self.create_payment(route, receiver_amount, event.processing_delay, event.desired_result)
+			last_hop_body = event.amount
+		logger.debug(f"Receiver will get {last_hop_body} in payment body")
+		p = self.create_payment(route, last_hop_body, event.processing_delay, event.desired_result)
 		num_sent, num_failed, num_reached_receiver = 0, 0, 0
 		for attempt_num in range(self.max_num_attempts_per_route_honest):
 			reached_receiver, last_node_reached, first_node_not_reached, error_type = self.ln_model.attempt_send_payment(
@@ -370,16 +389,23 @@ class Simulator:
 
 	def create_payment(self, route, amount, processing_delay, desired_result):
 		p, u_nodes, d_nodes = None, route[:-1], route[1:]
-		logger.debug("------")
 		for u_node, d_node in reversed(list(zip(u_nodes, d_nodes))):
 			logger.debug(f"Wrapping payment for fee policy from {u_node} to {d_node}")
-			chosen_cid = self.ln_model.get_cheapest_cid_in_hop(u_node, d_node, amount)
+			# Note: we model the sender's payment construction here
+			# The sender can't check if a hop really can forward (i.e., is not jammed)
+			# TODO: implement proper logic like: if the cheapest channel is jammed, choose another one
+			# also note: this check is time-independent: we can check capacity and enabled status without time
+			# only jamming status check is time-sensitive, but this is unavailable for us here
+			chosen_ch = self.ln_model.get_hop(u_node, d_node).get_cheapest_channel_maybe_can_forward(
+				Direction(u_node, d_node),
+				amount)
+			chosen_cid = chosen_ch.get_cid()
 			logger.debug(f"Suggested cheapest cid: {chosen_cid}")
 			hop = self.ln_model.get_hop(u_node, d_node)
-			logger.debug(f"Hop of this cid: {hop}")
+			#logger.debug(f"Hop of this cid: {hop}")
 			channel = hop.get_channel(chosen_cid)
-			logger.debug(f"Channel of chosen cid {chosen_cid}: {channel}")
-			chosen_ch_in_dir = channel.in_direction[Direction(u_node, d_node)]
+			#logger.debug(f"Channel of chosen cid {chosen_cid}: {channel}")
+			chosen_ch_in_dir = channel.in_direction(Direction(u_node, d_node))
 			is_last_hop = p is None
 			p = Payment(
 				downstream_payment=p,
@@ -388,7 +414,7 @@ class Simulator:
 				success_fee_function=chosen_ch_in_dir.success_fee_function,
 				desired_result=desired_result if is_last_hop else None,
 				processing_delay=processing_delay if is_last_hop else None,
-				receiver_amount=amount if is_last_hop else None)
+				last_hop_body=amount if is_last_hop else None)
 		return p
 
 	@staticmethod

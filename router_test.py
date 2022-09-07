@@ -17,12 +17,11 @@ AMOUNT = 100
 def get_ln_model(snapshot_file):
 	with open(snapshot_file, "r") as snapshot_file:
 		snapshot_json = json.load(snapshot_file)
-	ln_model = LNModel(snapshot_json, default_num_slots=2, no_balance_failures=True, keep_receiver_upfront_fee=True)
+	ln_model = LNModel(snapshot_json, default_num_slots_per_channel_in_direction=2, no_balance_failures=True)
 	return ln_model
 
 
 def test_get_routes_via_target_hops_simple():
-	# FIXME: change this test to use add_jammers_channels in fixture
 	ln_model = get_ln_model(ROUTER_TEST_SNAPSHOT_FILENAME)
 	router = Router(ln_model, AMOUNT, "Sender", "Receiver")
 	target_hops = [("Alice", "Bob"), ("Charlie", "Dave"), ("Elon", "Fred")]
@@ -44,7 +43,7 @@ def wheel_ln_model_with_jammers_channels():
 	ln_model.add_jammers_channels(
 		send_to_nodes=["Alice"],
 		receive_from_nodes=["Dave"],
-		num_slots=(ln_model.default_num_slots + 1) * 5)
+		num_slots=(ln_model.default_num_slots_per_channel_in_direction + 1) * 5)
 	return ln_model
 
 
