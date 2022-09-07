@@ -33,12 +33,12 @@ class Hop:
 		return [cid for cid in self.channels if self.channels[cid].is_enabled_in_direction(direction)]
 
 	def get_cids_can_forward(self, amount, direction):
-		return [cid for cid in self.get_cids_enabled_in_direction(direction) if self.channels[cid].can_forward(amount, direction)]
+		return [cid for cid in self.get_cids_enabled_in_direction(direction) if self.channels[cid].can_forward_in_direction(direction, amount)]
 
 	def get_cids_can_forward_by_fee(self, amount, direction):
 		return sorted(
 			self.get_cids_can_forward(amount, direction),
-			key=lambda cid: self.channels[cid].get_total_fee_in_direction(amount, direction))
+			key=lambda cid: self.channels[cid].get_total_fee_in_direction(direction, amount))
 
 	def get_cheapest_cid(self, amount, direction):
 		cids_sorted = self.get_cids_can_forward_by_fee(amount, direction)
@@ -54,14 +54,17 @@ class Hop:
 		for cid, ch in self.channels.items():
 			ch.set_deliberate_failure_behavior_in_direction(direction, prob, spoofing_error_type)
 
-	def is_jammed(self, direction, time):
-		return all(ch.is_jammed(direction, time) for ch in self.channels.values())
+	def has_available_channel_in_direction(self, direction, time):
+		return any(ch.is_available_in_direction_at_time(direction, time) for ch in self.channels.values())
 
-	def get_num_slots_occupied(self, direction):
-		return sum(ch.get_num_slots_occupied(direction) for ch in self.channels.values())
+	def all_channels_are_jammed_in_direction(self, direction, time):
+		return not self.has_available_channel_in_direction(direction, time)
 
 	def get_jammed_status(self, direction, time):
-		return (self.is_jammed(direction, time), self.get_num_slots_occupied(direction))
+		return (self.all_channels_are_jammed_in_direction(direction, time), self.get_total_num_slots_occupied_in_direction(direction))
+
+	def get_total_num_slots_occupied_in_direction(self, direction):
+		return sum(ch.get_num_slots_occupied_in_direction(direction) for ch in self.channels.values())
 
 	def __repr__(self):  # pragma no cover
 		s = "Hop with properties:"

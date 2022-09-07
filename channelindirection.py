@@ -48,14 +48,11 @@ class ChannelInDirection:
 		'''
 		self.set_fee(FeeType.UPFRONT, upfront_base_fee, upfront_fee_rate)
 		self.set_fee(FeeType.SUCCESS, success_base_fee, success_fee_rate)
-		# we remember num_slots in a separate variable:
-		# there is no way to get maxsize from a queue after it's created
 		self.reset_slots(num_slots)
 		self.deliberately_fail_prob = deliberately_fail_prob
 		self.spoofing_error_type = spoofing_error_type
 
 	def set_fee(self, fee_type, base_fee, fee_rate):
-		assert(fee_type in (FeeType.UPFRONT, FeeType.SUCCESS))
 		fee_function = partial(lambda a: generic_fee_function(base_fee, fee_rate, a))
 		if fee_type == FeeType.UPFRONT:
 			self.upfront_base_fee = base_fee
@@ -69,10 +66,12 @@ class ChannelInDirection:
 	def reset_slots(self, num_slots=None):
 		# Initialize slots to a PriorityQueue of a given maxsize.
 		# (An existing queue cannot be re-sized.)
+		# Store num_slots in a separate variable:
+		# we can't get it from a queue after it's created.
 		if num_slots is not None:
-			assert(num_slots > 0)
-			self.max_num_slots = num_slots
-		self.slots = PriorityQueue(maxsize=self.max_num_slots)
+			assert num_slots > 0
+			self.num_slots = num_slots
+		self.slots = PriorityQueue(maxsize=self.num_slots)
 
 	def is_full(self):
 		return self.slots.full()
@@ -81,63 +80,66 @@ class ChannelInDirection:
 		return self.slots.empty()
 
 	def is_jammed(self, time):
-		return self.is_full() and self.slots.queue[0][0] > time
+		return self.is_full() and self.get_top_timestamp() > time
 
-	def get_max_num_slots(self):
-		return self.max_num_slots
+	def get_num_slots(self):
+		return self.num_slots
 
 	def get_num_slots_occupied(self):
 		# Note: this doesn't reflect that some slots may be occupied by outdated HTLCs!
 		return self.slots.qsize()
 
+	def get_num_slots_free(self):
+		return self.get_num_slots() - self.get_num_slots_occupied()
+
 	def get_top_timestamp(self):
-		return self.slots.queue[0][0] if not self.is_empty() else None
+		assert not self.is_empty()
+		return self.slots.queue[0][0]
 
 	def get_total_fee(self, amount):
 		success_fee = self.success_fee_function(amount)
 		upfront_fee = self.upfront_fee_function(amount + success_fee)
 		return success_fee + upfront_fee
 
-	def ensure_free_slot(self, time, num_slots_needed=1):
-		# Ensure there is a free slot.
-		# If the queue is full, check the timestamp of the earliest in-flight HTLC.
-		# If it is in the past, pop the HTLC (so it can be resolved).
-		# Return True / False and the released HTLC, if any, with its timestamp.
-		success, released_htlcs = False, []
-		num_free_slots = self.max_num_slots - self.slots.qsize()
-		if num_free_slots >= num_slots_needed:
-			# we have enough free slots without the need to pop anything
-			success = True
-		else:
-			num_slots_to_release = num_slots_needed - num_free_slots
-			for _ in range(num_slots_to_release):
-				earliest_in_flight_timestamp = self.slots.queue[0][0]
-				# Non-strict: we do resolve HTLCs that expire exactly now
-				if earliest_in_flight_timestamp <= time:
-					resolution_time, released_htlc = self.slots.get_nowait()
-					released_htlcs.append((resolution_time, released_htlc))
-					# freed a slot by popping an outdated HTLC
-					success = True
-				else:
-					# all slots full; no outdated HTLCs
-					success = False
-			if not success:
-				for resolution_time, released_htlc in released_htlcs:
-					self.store_htlc(resolution_time, released_htlc)
-				released_htlcs = []
-		return success, released_htlcs
+	def get_htlc(self):
+		assert not self.is_empty()
+		resolution_time, released_htlc = self.slots.get_nowait()
+		return resolution_time, released_htlc
 
 	def store_htlc(self, resolution_time, in_flight_htlc):
 		# Store an in-flight HTLC in the slots queue.
 		# The queue must not be full!
 		# (We must have called ensure_free_slot() earlier.)
-		assert(not self.is_full())
+		assert not self.is_full()
 		self.slots.put_nowait((resolution_time, in_flight_htlc))
 
-	def get_htlc(self):
-		assert(not self.is_empty())
-		resolution_time, released_htlc = self.slots.get_nowait()
-		return resolution_time, released_htlc
+	def ensure_free_slot(self, time, num_slots_needed=1):
+		# Ensure there are num_slots_needed free slots.
+		# If the queue is full, check the timestamp of the earliest in-flight HTLC.
+		# If it is in the past, pop the HTLC (so it can be resolved).
+		# Return True / False and the released HTLC, if any, with its timestamp.
+		success, released_htlcs = False, []
+		num_free_slots = self.get_num_slots_free()
+		if num_free_slots >= num_slots_needed:
+			# we have enough free slots without needing to release any HTLCs
+			success = True
+		else:
+			num_htlcs_to_release = num_slots_needed - num_free_slots
+			for _ in range(num_htlcs_to_release):
+				# Non-strict inequlity: we do resolve HTLCs that expire exactly now
+				if self.get_top_timestamp() <= time:
+					# free a slot by popping an outdated HTLC
+					released_htlcs.append(self.get_htlc())
+					success = True
+				else:
+					# no more outdated HTLCs
+					success = False
+			if not success:
+				# push back the released HTLCs if we couldn't pop enough of them
+				for resolution_time, released_htlc in released_htlcs:
+					self.store_htlc(resolution_time, released_htlc)
+				released_htlcs = []
+		return success, released_htlcs
 
 	def set_deliberate_failure_behavior(self, prob, spoofing_error_type=ErrorType.FAILED_DELIBERATELY):
 		self.deliberately_fail_prob = prob
@@ -145,7 +147,7 @@ class ChannelInDirection:
 
 	def __repr__(self):  # pragma: no cover
 		s = "\nChannelInDirection with properties:"
-		s += "\nbusy slots:	" + str(self.get_num_slots_occupied())
-		s += "\nmax slots:	" + str(self.get_max_num_slots())
+		s += "\nslots (busy / total):	" + str(self.get_num_slots_occupied())
+		s += " / " + str(self.get_num_slots())
 		s += "\nslots full?	" + str(self.is_full())
 		return s

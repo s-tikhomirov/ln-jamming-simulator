@@ -20,7 +20,7 @@ def test_channel_direction():
 	cd = ChannelInDirection(num_slots=2)
 	# Before adding in-flight payments: all slots are free
 	assert(cd.is_empty())
-	assert(cd.get_max_num_slots() == 2)
+	assert(cd.get_num_slots() == 2)
 	t_0, htlc_0 = 1, InFlightHtlc("pid", 100, True)
 	t_1, htlc_1 = 5, InFlightHtlc("pid", 100, True)
 	t_2, htlc_2 = 6, InFlightHtlc("pid", 100, True)
@@ -59,7 +59,7 @@ def test_reset_slots():
 	cd.store_htlc(1, InFlightHtlc("pid", 100, True))
 	cd.reset_slots(num_slots=3)
 	assert(cd.get_num_slots_occupied() == 0)
-	assert(cd.get_max_num_slots() == 3)
+	assert(cd.get_num_slots() == 3)
 
 
 def test_is_jammed():

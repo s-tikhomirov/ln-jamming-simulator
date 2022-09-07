@@ -147,7 +147,8 @@ def test_get_channel_graph_from_json():
 	assert(g.has_edge(a, b))
 	ab_hop = ln_model.get_hop(a, b)
 	assert(ab_hop.get_num_cids() == 1 and ab_hop.has_cid("ABx0"))
-	assert(ab_hop.get_channel("ABx0").is_enabled_in_both_directions())
+	assert(ab_hop.get_channel("ABx0").is_enabled_in_direction(Direction.Alph))
+	assert(ab_hop.get_channel("ABx0").is_enabled_in_direction(Direction.NonAlph))
 
 	# Bob - Charlie have three channels, one of them uni-directional
 	assert(g.has_edge(b, c))
@@ -156,8 +157,10 @@ def test_get_channel_graph_from_json():
 	assert(bc_hop.has_cid("BCx0"))
 	assert(bc_hop.has_cid("BCx1"))
 	assert(bc_hop.has_cid("BCx2"))
-	assert(bc_hop.get_channel("BCx0").is_enabled_in_both_directions())
-	assert(bc_hop.get_channel("BCx1").is_enabled_in_both_directions())
+	assert(bc_hop.get_channel("BCx0").is_enabled_in_direction(Direction.Alph))
+	assert(bc_hop.get_channel("BCx0").is_enabled_in_direction(Direction.NonAlph))
+	assert(bc_hop.get_channel("BCx1").is_enabled_in_direction(Direction.Alph))
+	assert(bc_hop.get_channel("BCx1").is_enabled_in_direction(Direction.NonAlph))
 	assert(bc_hop.get_channel("BCx2").is_enabled_in_direction(Direction("Charlie", "Bob")))
 	assert(not bc_hop.get_channel("BCx2").is_enabled_in_direction(Direction("Bob", "Charlie")))
 
@@ -312,7 +315,7 @@ def test_set_fee_for_all():
 	ln_model = get_ln_model()
 	ab_hop = ln_model.get_hop(a, b)
 	ch = ab_hop.get_channel("ABx0")
-	ch_in_dir = ch.get_ch_in_dir(Direction(a, b))
+	ch_in_dir = ch.get_channel_in_direction(Direction(a, b))
 	amount = 100
 	assert(ch_in_dir.success_fee_function(amount) == 0)
 	ln_model.set_fee_for_all(FeeType.SUCCESS, base=1, rate=0.02)

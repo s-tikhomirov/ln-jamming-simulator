@@ -99,13 +99,6 @@ class LNModel:
 		self.add_edge_to_routing_graph(src, dst, capacity, cid)
 
 	def add_edge_to_channel_graph(self, src, dst, capacity, cid, upfront_base_fee, upfront_fee_rate, success_base_fee, success_fee_rate, num_slots):
-		ch_in_dir = ChannelInDirection(
-			num_slots=num_slots,
-			upfront_base_fee=upfront_base_fee,
-			upfront_fee_rate=upfront_fee_rate,
-			success_base_fee=success_base_fee,
-			success_fee_rate=success_fee_rate
-		)
 		for node in (src, dst):
 			if node not in self.channel_graph:
 				self.channel_graph.add_node(node)
@@ -119,7 +112,10 @@ class LNModel:
 			hop.add_channel(ch, cid)
 		else:
 			ch = hop.get_channel(cid)
-		ch.add_ch_in_dir(ch_in_dir, Direction(src, dst))
+		direction = Direction(src, dst)
+		ch.enable_direction_with_num_slots(direction, num_slots)
+		ch.set_fee_in_direction(direction, FeeType.UPFRONT, upfront_base_fee, upfront_fee_rate)
+		ch.set_fee_in_direction(direction, FeeType.SUCCESS, success_base_fee, success_fee_rate)
 
 	def add_edge_to_routing_graph(self, src, dst, capacity, cid):
 		# TODO: do we need cid here?
@@ -263,6 +259,7 @@ class LNModel:
 		return [hop_data.get_channel(cid).in_direction[Direction(u_node, d_node)] for cid in hop_data.channels]
 
 	def hop_is_jammed(self, hop, now):
+		# replace with hop.all_channels_are_jammed_in_direction()
 		ch_in_dirs = self.get_ch_in_dirs(hop)
 		return all(ch_in_dir.is_jammed(now) if ch_in_dir is not None else True for ch_in_dir in ch_in_dirs)
 
