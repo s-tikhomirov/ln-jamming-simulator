@@ -78,7 +78,7 @@ class LNModel:
 		logger.info(f"LN model created.")
 		logger.info(f"Channel graph has {self.channel_graph.number_of_nodes()} nodes and {self.channel_graph.number_of_edges()} channels.")
 		logger.info(f"Routing graph has {self.routing_graph.number_of_nodes()} nodes and {self.routing_graph.number_of_edges()} channels.")
-		self.reset_revenues_for_all()
+		self.reset_all_revenues()
 
 	def add_edge(
 		self,
@@ -99,7 +99,7 @@ class LNModel:
 		self.add_edge_to_routing_graph(src, dst, capacity, cid)
 
 	def add_edge_to_channel_graph(self, src, dst, capacity, cid, upfront_base_fee, upfront_fee_rate, success_base_fee, success_fee_rate, num_slots):
-		chdir = ChannelInDirection(
+		ch_in_dir = ChannelInDirection(
 			num_slots=num_slots,
 			upfront_base_fee=upfront_base_fee,
 			upfront_fee_rate=upfront_fee_rate,
@@ -119,7 +119,7 @@ class LNModel:
 			hop.add_channel(ch, cid)
 		else:
 			ch = hop.get_channel(cid)
-		ch.add_chdir(chdir, Direction(src, dst))
+		ch.add_ch_in_dir(ch_in_dir, Direction(src, dst))
 
 	def add_edge_to_routing_graph(self, src, dst, capacity, cid):
 		# TODO: do we need cid here?
@@ -163,15 +163,6 @@ class LNModel:
 	def get_cids_can_forward_by_fee(self, u_node, d_node, amount):
 		hop = self.get_hop(u_node, d_node)
 		return hop.get_cids_can_forward_by_fee(amount, Direction(u_node, d_node))
-
-	def reset_revenue(self, node):
-		self.channel_graph.nodes[node][FeeType.UPFRONT.value] = 0
-		self.channel_graph.nodes[node][FeeType.SUCCESS.value] = 0
-
-	def reset_revenues_for_all(self):
-		logger.debug("Resetting all revenues")
-		for node in self.channel_graph.nodes:
-			self.reset_revenue(node)
 
 	def get_routing_graph_for_amount(self, amount):
 		# Return a graph view that only includes edges with capacity >= amount
@@ -217,27 +208,18 @@ class LNModel:
 		for (u_node, d_node) in self.routing_graph.edges():
 			assert(u_node in self.routing_graph.predecessors(d_node))
 			logger.debug(f"Setting {fee_type.value} fee from {u_node} to {d_node} to: base {base}, rate {rate}")
-			for ch_dir in self.get_ch_dirs((u_node, d_node)):
-				if ch_dir is not None:
-					ch_dir.set_fee(fee_type, base, rate)
+			for ch_in_dir in self.get_ch_in_dirs((u_node, d_node)):
+				if ch_in_dir is not None:
+					ch_in_dir.set_fee(fee_type, base, rate)
 
 	def set_upfront_fee_from_coeff_for_all(self, upfront_base_coeff, upfront_rate_coeff):
 		for (u_node, d_node) in self.routing_graph.edges():
-			for ch_dir in self.get_ch_dirs((u_node, d_node)):
-				if ch_dir is not None:
-					ch_dir.set_fee(
+			for ch_in_dir in self.get_ch_in_dirs((u_node, d_node)):
+				if ch_in_dir is not None:
+					ch_in_dir.set_fee(
 						FeeType.UPFRONT,
-						upfront_base_coeff * ch_dir.success_base_fee,
-						upfront_rate_coeff * ch_dir.success_fee_rate)
-
-	def reset_with_num_slots(self, u_node, d_node, num_slots):
-		# Resize the slots queue to a num_slots.
-		# Note: this erases existing in-flight HTLCs.
-		# (Which is OK as we use this to reset the graph between experiments.)
-		logger.debug(f"Resetting {u_node}-{d_node} with num slots = {num_slots}")
-		for ch_dir in self.get_ch_dirs((u_node, d_node)):
-			if ch_dir is not None:
-				ch_dir.reset_with_num_slots(num_slots)
+						upfront_base_coeff * ch_in_dir.success_base_fee,
+						upfront_rate_coeff * ch_in_dir.success_fee_rate)
 
 	def finalize_in_flight_htlcs(self, now):
 		'''
@@ -253,13 +235,13 @@ class LNModel:
 			hop = self.get_hop(node_1, node_2)
 			for ch in hop.get_channels():
 				for (u_node, d_node) in ((node_1, node_2), (node_2, node_1)):
-					ch_dir = ch.directions[Direction(u_node, d_node)]
-					if ch_dir is not None:
-						while not ch_dir.is_empty():
-							next_htlc_time = ch_dir.get_top_timestamp()
+					ch_in_dir = ch.in_direction[Direction(u_node, d_node)]
+					if ch_in_dir is not None:
+						while not ch_in_dir.is_empty():
+							next_htlc_time = ch_in_dir.get_top_timestamp()
 							if next_htlc_time > now:
 								break
-							resolution_time, released_htlc = ch_dir.get_htlc()
+							resolution_time, released_htlc = ch_in_dir.get_htlc()
 							#logger.debug(f"Released HTLC {released_htlc} with resolution time {next_htlc_time}")
 							self.apply_htlc(resolution_time, released_htlc, u_node, d_node, now)
 						#logger.debug(f"No more HTLCs to resolve up to now ({now})")
@@ -275,27 +257,46 @@ class LNModel:
 			self.subtract_revenue(u_node, FeeType.SUCCESS, htlc.success_fee)
 			self.add_revenue(d_node, FeeType.SUCCESS, htlc.success_fee)
 
-	def get_ch_dirs(self, hop):
+	def get_ch_in_dirs(self, hop):
 		u_node, d_node = hop
 		hop_data = self.get_hop(u_node, d_node)
-		return [hop_data.get_channel(cid).directions[Direction(u_node, d_node)] for cid in hop_data.channels]
+		return [hop_data.get_channel(cid).in_direction[Direction(u_node, d_node)] for cid in hop_data.channels]
 
 	def hop_is_jammed(self, hop, now):
-		ch_dirs = self.get_ch_dirs(hop)
-		return all(ch_dir.is_jammed(now) if ch_dir is not None else True for ch_dir in ch_dirs)
+		ch_in_dirs = self.get_ch_in_dirs(hop)
+		return all(ch_in_dir.is_jammed(now) if ch_in_dir is not None else True for ch_in_dir in ch_in_dirs)
 
-	def reset_in_flight_htlcs(self):
-		logger.debug("Resetting all in-flight HTLCs")
-		# NB: this was routing_graph before!
+	def reset_slots(self, u_node, d_node, num_slots):
+		# Resize the slots queue to a num_slots.
+		# Note: this erases existing in-flight HTLCs.
+		# (Which is OK as we use this to reset the graph between experiments.)
+		logger.debug(f"Resetting {u_node}-{d_node} with num slots = {num_slots}")
+		for ch_in_dir in self.get_ch_in_dirs((u_node, d_node)):
+			if ch_in_dir is not None:
+				ch_in_dir.reset_slots(num_slots)
+
+	def reset_all_slots(self):
+		logger.debug("Resetting slots in all channels")
 		for u_node, d_node in self.channel_graph.edges():
 			hop = self.get_hop(u_node, d_node)
 			for cid in hop.get_cids():
 				ch = hop.get_channel(cid)
-				ch.reset_in_flight_htlcs()
+				for direction in (Direction.Alph, Direction.NonAlph):
+					if ch.in_direction[direction] is not None:
+						ch.in_direction[direction].reset_slots()
 
-	def reset(self):
-		self.reset_revenues_for_all()
-		self.reset_in_flight_htlcs()
+	def reset_revenue(self, node):
+		self.channel_graph.nodes[node][FeeType.UPFRONT.value] = 0
+		self.channel_graph.nodes[node][FeeType.SUCCESS.value] = 0
+
+	def reset_all_revenues(self):
+		logger.debug("Resetting all revenues")
+		for node in self.channel_graph.nodes:
+			self.reset_revenue(node)
+
+	def reset_all_slots_and_revenues(self):
+		self.reset_all_slots()
+		self.reset_all_revenues()
 
 	def attempt_send_payment(self, payment, sender, now, attempt_id=""):
 		'''
@@ -315,16 +316,16 @@ class LNModel:
 			u_node, d_node = d_node, p.downstream_node
 			last_node_reached, first_node_not_reached = u_node, d_node
 			hops.add((u_node, d_node))
-			#chosen_cid, chosen_ch_dir = self.lowest_fee_enabled_channel(u_node, d_node, p.amount)
+			#chosen_cid, chosen_ch_in_dir = self.lowest_fee_enabled_channel(u_node, d_node, p.amount)
 			#logger.debug(f"Routing through channel {chosen_cid} from {u_node} to {d_node}")
 			chosen_cid = self.get_cheapest_cid_in_hop(u_node, d_node, p.amount)
-			chosen_ch_dir = self.get_hop(u_node, d_node).get_channel(chosen_cid).directions[Direction(u_node, d_node)]
+			chosen_ch_in_dir = self.get_hop(u_node, d_node).get_channel(chosen_cid).in_direction[Direction(u_node, d_node)]
 
 			# Deliberately fail the payment with some probability
 			# (not used in experiments but useful for testing response to errors)
-			if random() < chosen_ch_dir.deliberately_fail_prob:
+			if random() < chosen_ch_in_dir.deliberately_fail_prob:
 				logger.debug(f"{u_node} deliberately failed payment {payment_attempt_id}")
-				error_type = chosen_ch_dir.spoofing_error_type
+				error_type = chosen_ch_in_dir.spoofing_error_type
 				break
 
 			# Model balance failures randomly, depending on the amount and channel capacity
@@ -339,7 +340,7 @@ class LNModel:
 
 			# Check if there is a free slot
 			num_slots_needed_for_this_hop = len(tmp_hops_to_unstored_htlcs[(u_node, d_node)]) + 1
-			has_free_slot, released_htlcs = chosen_ch_dir.ensure_free_slot(now, num_slots_needed=num_slots_needed_for_this_hop)
+			has_free_slot, released_htlcs = chosen_ch_in_dir.ensure_free_slot(now, num_slots_needed=num_slots_needed_for_this_hop)
 			for resolution_time, released_htlc in released_htlcs:
 				# Resolve the outdated HTLC we released to free a slot for the current payment
 				#logger.debug(f"Released an HTLC from {u_node} to {d_node} with resolution time {resolution_time} (now is {now}): {released_htlc}")
@@ -380,8 +381,8 @@ class LNModel:
 				if (u_node, d_node) in tmp_hops_to_unstored_htlcs:
 					for chosen_cid, direction, resolution_time, in_flight_htlc in tmp_hops_to_unstored_htlcs[(u_node, d_node)]:
 						logger.debug(f"Storing HTLC in channel {chosen_cid} from {u_node} to {d_node} to resolve at time {resolution_time}: {in_flight_htlc}")
-						ch_dir = self.get_hop(u_node, d_node).get_channel(chosen_cid).directions[direction]
-						ch_dir.store_htlc(resolution_time, in_flight_htlc)
+						ch_in_dir = self.get_hop(u_node, d_node).get_channel(chosen_cid).in_direction[direction]
+						ch_in_dir.store_htlc(resolution_time, in_flight_htlc)
 
 		assert(reached_receiver or error_type is not None)
 		return reached_receiver, last_node_reached, first_node_not_reached, error_type

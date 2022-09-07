@@ -312,13 +312,13 @@ def test_set_fee_for_all():
 	ln_model = get_ln_model()
 	ab_hop = ln_model.get_hop(a, b)
 	ch = ab_hop.get_channel("ABx0")
-	ch_dir = ch.get_chdir(Direction(a, b))
+	ch_in_dir = ch.get_ch_in_dir(Direction(a, b))
 	amount = 100
-	assert(ch_dir.success_fee_function(amount) == 0)
+	assert(ch_in_dir.success_fee_function(amount) == 0)
 	ln_model.set_fee_for_all(FeeType.SUCCESS, base=1, rate=0.02)
-	assert(ch_dir.success_fee_function(amount) == 3)
+	assert(ch_in_dir.success_fee_function(amount) == 3)
 	ln_model.set_upfront_fee_from_coeff_for_all(upfront_base_coeff=2, upfront_rate_coeff=3)
-	assert(ch_dir.upfront_fee_function(amount) == 2 + 0.06 * amount)
+	assert(ch_in_dir.upfront_fee_function(amount) == 2 + 0.06 * amount)
 
 
 def test_get_shortest_routes_wrong_nodes():

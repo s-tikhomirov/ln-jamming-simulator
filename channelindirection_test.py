@@ -54,10 +54,10 @@ def test_channel_direction():
 	# Queue is full, and we can't pop anything: can't store htlc 3
 
 
-def test_reset_with_num_slots():
+def test_reset_slots():
 	cd = ChannelInDirection(num_slots=2)
 	cd.store_htlc(1, InFlightHtlc("pid", 100, True))
-	cd.reset_with_num_slots(3)
+	cd.reset_slots(num_slots=3)
 	assert(cd.get_num_slots_occupied() == 0)
 	assert(cd.get_max_num_slots() == 3)
 
@@ -68,7 +68,7 @@ def test_is_jammed():
 	cd.store_htlc(1, InFlightHtlc("pid", 100, True))
 	assert(cd.get_top_timestamp() == 1)
 	assert(cd.is_jammed(time=0))
-	cd.reset_with_num_slots(2)
+	cd.reset_slots(num_slots=2)
 	cd.store_htlc(1, InFlightHtlc("pid", 100, True))
 	cd.store_htlc(0, InFlightHtlc("pid", 100, True))
 	assert(cd.get_top_timestamp() == 0)

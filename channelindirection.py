@@ -40,7 +40,7 @@ class ChannelInDirection:
 				A rate for upfront fee function.
 
 			- deliberately_fail_prob
-				The probability with which this ch_dir deliberately fails payments
+				The probability with which this ch_in_dir deliberately fails payments
 				(before making any other checks, like balance or slot checks).
 
 			- spoofing_error_type
@@ -50,9 +50,7 @@ class ChannelInDirection:
 		self.set_fee(FeeType.SUCCESS, success_base_fee, success_fee_rate)
 		# we remember num_slots in a separate variable:
 		# there is no way to get maxsize from a queue after it's created
-		assert(num_slots > 0)
-		self.max_num_slots = num_slots
-		self.slots = PriorityQueue(maxsize=self.max_num_slots)
+		self.reset_slots(num_slots)
 		self.deliberately_fail_prob = deliberately_fail_prob
 		self.spoofing_error_type = spoofing_error_type
 
@@ -68,15 +66,12 @@ class ChannelInDirection:
 			self.success_fee_rate = fee_rate
 			self.success_fee_function = fee_function
 
-	def reset_with_num_slots(self, num_slots):
+	def reset_slots(self, num_slots=None):
 		# Initialize slots to a PriorityQueue of a given maxsize.
 		# (An existing queue cannot be re-sized.)
-		# Optionally, copy over all HTLCs from the old queue.
-		# TODO: check that the new queue is larger than the old one if copy_existing_htlcs.
-		self.max_num_slots = num_slots
-		self.reset()
-
-	def reset(self):
+		if num_slots is not None:
+			assert(num_slots > 0)
+			self.max_num_slots = num_slots
 		self.slots = PriorityQueue(maxsize=self.max_num_slots)
 
 	def is_full(self):

@@ -251,8 +251,8 @@ def test_simulator_jamming():
 		max_num_routes_jamming=1,
 		num_runs_per_simulation=1,
 		subtract_last_hop_upfront_fee_for_honest_payments=False)
-	sim.ln_model.reset_with_num_slots("Alice", "Mary", 100)
-	sim.ln_model.reset_with_num_slots("Charlie", "Dave", 100)
+	sim.ln_model.reset_slots("Alice", "Mary", num_slots=100)
+	sim.ln_model.reset_slots("Charlie", "Dave", num_slots=100)
 	duration = 10
 	sch = Schedule(duration)
 	jam_processing_delay = 4
@@ -373,8 +373,8 @@ def test_error_response_jamming():
 		direction=(Direction("Mary", "Charlie")),
 		prob=1,
 		spoofing_error_type=ErrorType.LOW_BALANCE)
-	sim.ln_model.reset_with_num_slots("Alice", "Mary", 100)
-	sim.ln_model.reset_with_num_slots("Charlie", "Dave", 100)
+	sim.ln_model.reset_slots("Alice", "Mary", num_slots=100)
+	sim.ln_model.reset_slots("Charlie", "Dave", num_slots=100)
 	simulation_duration = 4
 	max_num_attempts_per_route_jamming = 10
 	sch = Schedule(simulation_duration)

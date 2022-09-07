@@ -10,18 +10,18 @@ class Channel:
 
 	def __init__(self, capacity, num_slots_per_direction=None):
 		self.capacity = capacity
-		self.directions = {Direction.Alph: None, Direction.NonAlph: None}
+		self.in_direction = {Direction.Alph: None, Direction.NonAlph: None}
 		if num_slots_per_direction is not None:
-			self.add_chdir_with_num_slots(num_slots_per_direction)
+			self.add_ch_in_dir_with_num_slots(num_slots_per_direction)
 
-	def add_chdir_with_num_slots(self, num_slots):
-		chdir_0 = ChannelInDirection(num_slots)
-		chdir_1 = ChannelInDirection(num_slots)
-		self.add_chdir(chdir_0, Direction.Alph)
-		self.add_chdir(chdir_1, Direction.NonAlph)
+	def add_ch_in_dir_with_num_slots(self, num_slots):
+		ch_in_dir_alph = ChannelInDirection(num_slots)
+		ch_in_dir_nonalph = ChannelInDirection(num_slots)
+		self.add_ch_in_dir(ch_in_dir_alph, Direction.Alph)
+		self.add_ch_in_dir(ch_in_dir_nonalph, Direction.NonAlph)
 
 	def is_enabled_in_direction(self, direction):
-		return self.directions[direction] is not None
+		return self.in_direction[direction] is not None
 
 	def is_enabled_in_both_directions(self):
 		return (
@@ -29,48 +29,43 @@ class Channel:
 			and self.is_enabled_in_direction(Direction.NonAlph))
 
 	def is_jammed(self, direction, time):
-		# FIXME: is a non-existent ch_dir jammed?
-		if self.directions[direction] is None:
+		# FIXME: is a non-existent ch_in_dir jammed?
+		if self.in_direction[direction] is None:
 			return True
-		return self.directions[direction].is_jammed(time)
+		return self.in_direction[direction].is_jammed(time)
 
 	def get_num_slots_occupied(self, direction):
-		if self.directions[direction] is None:
+		if self.in_direction[direction] is None:
 			return 0
-		return self.directions[direction].get_num_slots_occupied()
+		return self.in_direction[direction].get_num_slots_occupied()
 
-	def add_chdir(self, chdir, direction):
-		assert(self.directions[direction] is None)
-		self.directions[direction] = chdir
+	def add_ch_in_dir(self, ch_in_dir, direction):
+		assert(self.in_direction[direction] is None)
+		self.in_direction[direction] = ch_in_dir
 
-	def get_chdir(self, direction):
-		return self.directions[direction]
+	def get_ch_in_dir(self, direction):
+		return self.in_direction[direction]
 
 	def set_fee_in_direction(self, fee_type, base_fee, fee_rate, direction):
 		# don't allow setting fee for a disabled channel direction
 		assert(self.is_enabled_in_direction(direction))
-		self.directions[direction].set_fee(fee_type, base_fee, fee_rate)
+		self.in_direction[direction].set_fee(fee_type, base_fee, fee_rate)
 
 	def can_forward(self, amount, direction):
 		return self.is_enabled_in_direction(direction) and amount <= self.capacity
 
 	def get_total_fee_in_direction(self, amount, direction):
 		assert(self.can_forward(amount, direction))
-		chdir = self.directions[direction]
-		return chdir.get_total_fee(amount)
-
-	def reset_in_flight_htlcs(self):
-		for direction in (Direction.Alph, Direction.NonAlph):
-			if self.directions[direction] is not None:
-				self.directions[direction].reset()
+		ch_in_dir = self.in_direction[direction]
+		return ch_in_dir.get_total_fee(amount)
 
 	def set_deliberate_failure_behavior_in_direction(self, direction, prob, spoofing_error_type=ErrorType.FAILED_DELIBERATELY):
-		ch_dir = self.directions[direction]
-		if ch_dir is not None:
-			ch_dir.set_deliberate_failure_behavior(prob, spoofing_error_type)
+		ch_in_dir = self.in_direction[direction]
+		if ch_in_dir is not None:
+			ch_in_dir.set_deliberate_failure_behavior(prob, spoofing_error_type)
 
 	def __repr__(self):  # pragma: no cover
 		s = "\nChannel with properties:"
 		s += "\ncapacity:	" + str(self.capacity)
-		s += "\nchdirs:	" + str(self.directions)
+		s += "\nch_in_dirs:	" + str(self.in_direction)
 		return s

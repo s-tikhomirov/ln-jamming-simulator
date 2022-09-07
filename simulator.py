@@ -130,7 +130,7 @@ class Simulator:
 		return stats, revenues
 
 	def execute_schedule(self, schedule):
-		self.ln_model.reset()
+		self.ln_model.reset_all_slots_and_revenues()
 		self.now = -1
 		self.schedule = schedule
 		self.num_sent_total, self.num_failed_total, self.num_reached_receiver_total = 0, 0, 0
@@ -346,9 +346,9 @@ class Simulator:
 			logger.debug(f"Channel of chosen cid {chosen_cid}: {channel}")
 			direction = Direction(pre_receiver, receiver)
 			logger.debug(f"We need direction {direction}")
-			chosen_ch_dir = channel.directions[direction]
-			chosen_ch_dir = self.ln_model.get_hop(receiver, pre_receiver).get_channel(chosen_cid).directions[direction]
-			receiver_amount = Simulator.body_for_amount(event.amount, chosen_ch_dir.upfront_fee_function)
+			chosen_ch_in_dir = channel.in_direction[direction]
+			chosen_ch_in_dir = self.ln_model.get_hop(receiver, pre_receiver).get_channel(chosen_cid).in_direction[direction]
+			receiver_amount = Simulator.body_for_amount(event.amount, chosen_ch_in_dir.upfront_fee_function)
 		logger.debug(f"Receiver will get {receiver_amount} in payment body")
 		p = self.create_payment(route, receiver_amount, event.processing_delay, event.desired_result)
 		num_sent, num_failed, num_reached_receiver = 0, 0, 0
@@ -379,13 +379,13 @@ class Simulator:
 			logger.debug(f"Hop of this cid: {hop}")
 			channel = hop.get_channel(chosen_cid)
 			logger.debug(f"Channel of chosen cid {chosen_cid}: {channel}")
-			chosen_ch_dir = channel.directions[Direction(u_node, d_node)]
+			chosen_ch_in_dir = channel.in_direction[Direction(u_node, d_node)]
 			is_last_hop = p is None
 			p = Payment(
 				downstream_payment=p,
 				downstream_node=d_node,
-				upfront_fee_function=chosen_ch_dir.upfront_fee_function,
-				success_fee_function=chosen_ch_dir.success_fee_function,
+				upfront_fee_function=chosen_ch_in_dir.upfront_fee_function,
+				success_fee_function=chosen_ch_in_dir.success_fee_function,
 				desired_result=desired_result if is_last_hop else None,
 				processing_delay=processing_delay if is_last_hop else None,
 				receiver_amount=amount if is_last_hop else None)
