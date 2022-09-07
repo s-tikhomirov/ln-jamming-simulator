@@ -330,7 +330,6 @@ def test_body_for_amount_function():
 		target_amount,
 		upfront_fee_function,
 		max_steps=3)
-	logger.debug(f"{adjusted_amount}")
 	assert(adjusted_amount == 875)
 
 

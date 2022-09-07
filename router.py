@@ -9,19 +9,26 @@ logger = logging.getLogger(__name__)
 
 class Router:
 
-	def __init__(self, ln_model, amount, sender, receiver):
+	def __init__(self, ln_model, amount, sender, receiver, max_target_hops_per_route=None, max_route_length=None):
 		self.ln_model = ln_model
 		self.g = nx.MultiDiGraph(ln_model.get_routing_graph_for_amount(
 			amount=(1 + ln_model.capacity_filtering_safety_margin) * amount))
 		self.sender = sender
 		self.receiver = receiver
-		self.update_route_generator(target_hops=[], max_route_length=ProtocolParams["MAX_ROUTE_LENGTH"], allow_repeated_hops=True)
+		self.max_route_length = ProtocolParams["MAX_ROUTE_LENGTH"] if max_route_length is None else max_route_length
+		max_route_length_minus_two = self.max_route_length - 2
+		self.max_target_hops_per_route = max_route_length_minus_two if max_target_hops_per_route is None else max(1, min(max_target_hops_per_route, self.max_route_length - 2))
+		assert(self.max_target_hops_per_route > 0)
+		self.update_route_generator(target_hops=[], allow_repeated_hops=True)
 
 	def update_route_generator(self, target_hops, max_route_length=None, allow_repeated_hops=True):
 		self.target_hops = target_hops
-		self.allow_repeated_hops = allow_repeated_hops
+		if target_hops:
+			self.max_target_hops_per_route = min(self.max_target_hops_per_route, len(self.target_hops))
 		if max_route_length is not None:
 			self.max_route_length = max_route_length
+			self.max_target_hops_per_route = min(self.max_target_hops_per_route, self.max_route_length)
+		self.allow_repeated_hops = allow_repeated_hops
 		self.pre_calculate_paths(self.sender, self.receiver)
 		self.routes = self.get_routes_via_target_hops()
 
@@ -40,22 +47,20 @@ class Router:
 	def remove_hop(self, hop):
 		self.g.remove_edge(hop[0], hop[1])
 
-	def get_routes_via_target_hops(self, min_target_hops_per_route=1, max_target_hops_per_route=None):
+	def get_routes_via_target_hops(self, min_target_hops_per_route=1):
 		found_routes = set()
-		target_hops_per_route = (
-			min(max_target_hops_per_route, len(self.target_hops))
-			if max_target_hops_per_route is not None else len(self.target_hops))
+		target_hops_per_route = self.max_target_hops_per_route
 		while target_hops_per_route >= min_target_hops_per_route:
 			#logger.debug(f"Looking for routes with {target_hops_per_route} target hops")
 			for target_hops_subset in itertools.combinations(self.target_hops, target_hops_per_route):
-				#logger.debug(f"Generating routes via permutations of {target_hops_subset}...")
+				#logger.debug(f"Generating routes via permutation of length {len(target_hops_subset)}...")
 				for hops_permutation in itertools.permutations(target_hops_subset):
 					#logger.debug(f"Considering permutation {hops_permutation}")
 					route = self.get_shortest_route_via_hops(hops_permutation)
-					#logger.info(f"Found route {route}")
 					if route is not None:
+						#logger.debug(f"Found route of length {len(route)}")
 						if route in found_routes:
-							#logger.info(f"Route {route} already found")
+							#logger.info(f"Route already found, skipping")
 							continue
 						else:
 							found_routes.add(route)

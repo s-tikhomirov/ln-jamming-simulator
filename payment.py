@@ -58,6 +58,8 @@ class Payment:
 		self.downstream_payment = downstream_payment
 		self.downstream_node = downstream_node
 		if is_last_hop:
+			logger.debug(f"Receiver amount is {receiver_amount}")
+			assert(receiver_amount > 0)
 			# Payment ID is useful for pushing equal HTLCs into the slots queues
 			self.id = "".join(choice(hexdigits) for i in range(6))
 			# this might have been adjusted by the sender to exclude upfront fee

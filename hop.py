@@ -42,6 +42,9 @@ class Hop:
 
 	def get_cheapest_cid(self, amount, direction):
 		cids_sorted = self.get_cids_can_forward_by_fee(amount, direction)
+		logger.debug(f"All cids in this hop: {self.get_cids()}")
+		logger.debug(f"Channels: {self.get_channels()}")
+		logger.debug(f"{cids_sorted} for amount {amount} in direction {direction}")
 		return cids_sorted[0] if cids_sorted else None
 
 	def has_cid(self, cid):

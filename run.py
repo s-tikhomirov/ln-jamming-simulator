@@ -4,7 +4,6 @@ from random import seed
 import json
 import csv
 import sys
-import networkx as nx
 
 from params import FeeParams, ProtocolParams, PaymentFlowParams
 from lnmodel import LNModel, FeeType
@@ -15,8 +14,8 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-DEFAULT_UPFRONT_BASE_COEFF_RANGE = [0, 0.001, 0.002]
-DEFAULT_UPFRONT_RATE_COEFF_RANGE = [0, 0.1]
+DEFAULT_UPFRONT_BASE_COEFF_RANGE = [0, 0.001, 0.01]
+DEFAULT_UPFRONT_RATE_COEFF_RANGE = [0, 0.1, 0.5]
 
 ABCD_SNAPSHOT_FILENAME = "./snapshots/listchannels_abcd.json"
 WHEEL_SNAPSHOT_FILENAME = "./snapshots/listchannels_wheel.json"
@@ -172,6 +171,7 @@ def main():
 		honest_must_route_via_nodes=[],
 		jammer_must_route_via_nodes=[],
 		max_target_hops_per_route=ProtocolParams["MAX_ROUTE_LENGTH"] - 2,
+		max_route_length=ProtocolParams["MAX_ROUTE_LENGTH"],
 		compact_output=False):
 
 		with open(snapshot_filename, 'r') as snapshot_file:
@@ -188,11 +188,17 @@ def main():
 			if target_node is None:
 				logger.critical("Honest senders / receivers are not specified, but target not is also not specified!")
 				exit()
-			target_node_neighbors = list(set(nx.all_neighbors(ln_model.routing_graph, target_node)))
-			logger.info(f"Setting honest senders to neighbors of {target_node}")
-			logger.debug(f"{target_node_neighbors}")
-			honest_senders = target_node_neighbors
-			honest_receivers = target_node_neighbors
+			honest_senders = list(set(hop[0] for hop in ln_model.routing_graph.in_edges(target_node)))
+			honest_receivers = list(set(hop[1] for hop in ln_model.routing_graph.out_edges(target_node)))
+			if not (honest_senders and honest_receivers):
+				if not honest_senders:
+					logger.critical(f"Target node {target_node} has no incoming edges")
+				if not honest_receivers:
+					logger.critical(f"Target node {target_node} has no outgoing edges")
+				logger.critical(f"We can't simulate honest payment flow!")
+				exit()
+			assert(honest_senders and honest_receivers)
+			logger.info(f"Setting honest senders / receiver to incoming / outgoing edges of target node {target_node}")
 			logger.info(f"Set {len(honest_senders)} honest senders")
 			logger.debug(f"{honest_senders}")
 			logger.info(f"Set {len(honest_receivers)} honest senders")
@@ -205,6 +211,7 @@ def main():
 		elif target_node is not None:
 			in_edges = list(ln_model.routing_graph.in_edges(target_node, data=False))
 			out_edges = list(ln_model.routing_graph.out_edges(target_node, data=False))
+			#target_hops = in_edges[:5] + out_edges[:5]
 			target_hops = in_edges + out_edges
 		else:
 			logger.critical(f"Neither target hops nor target nodes are specified!")
@@ -229,6 +236,7 @@ def main():
 			receive_from_nodes=jammer_receives_from,
 			num_slots=jammer_num_slots)
 
+		# FIXME: don't set fee for real experiment!
 		ln_model.set_fee_for_all(
 			FeeType.SUCCESS,
 			args.success_base_fee,
@@ -242,7 +250,8 @@ def main():
 			max_num_routes_honest=args.max_num_routes_honest,
 			num_runs_per_simulation=args.num_runs_per_simulation,
 			jammer_must_route_via_nodes=jammer_must_route_via_nodes,
-			max_target_hops_per_route=max_target_hops_per_route)
+			max_target_hops_per_route=max_target_hops_per_route,
+			max_route_length=max_route_length)
 
 		logger.info("Starting jamming simulations")
 
@@ -271,7 +280,7 @@ def main():
 			args.upfront_base_coeff_range,
 			args.upfront_rate_coeff_range)
 
-		if args.compact_output:
+		if compact_output:
 			assert(target_node is not None)
 			relevant_nodes = [target_node, "JammerSender", "JammerReceiver"]
 			results_jamming = get_compact_output(results_jamming, relevant_nodes)
@@ -280,6 +289,7 @@ def main():
 		results = {
 			"params": {
 				"scenario": args.scenario,
+				"target_node": target_node,
 				"num_target_hops": len(target_hops),
 				"simulation_duration": args.simulation_duration,
 				"num_runs_per_simulation": args.num_runs_per_simulation,
@@ -333,16 +343,16 @@ def main():
 			target_node="Hub",
 			honest_must_route_via_nodes=["Hub"])
 	elif args.scenario == "real":
-		big_node = "02ad6fb8d693dc1e4569bcedefadf5f72a931ae027dc0f0c544b34c1c6f3b9a02b"
-		small_node = "03c2d52cdcb5ddd40d62ba3c7197260b0f7b4dcc29ad64724c68426045919922f0"
+		#big_node = "02ad6fb8d693dc1e4569bcedefadf5f72a931ae027dc0f0c544b34c1c6f3b9a02b"
+		small_node = "0263a6d2f0fed7b1e14d01a0c6a6a1c0fae6e0907c0ac415574091e7839a00405b"
 		target_node = small_node
 		results = run_scenario(
 			snapshot_filename=REAL_SNAPSHOT_FILENAME,
 			target_node=target_node,
 			honest_must_route_via_nodes=[target_node],
-			max_target_hops_per_route=5,
+			max_target_hops_per_route=7,
+			max_route_length=10,
 			compact_output=True)
-		return results
 	else:
 		logger.error(f"Not yet properly implemented for scenario {args.scenario}!")
 		exit()

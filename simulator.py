@@ -1,5 +1,4 @@
 from statistics import mean
-import networkx as nx
 
 from chdir import ErrorType, FeeType
 from params import ProtocolParams
@@ -28,7 +27,8 @@ class Simulator:
 		num_runs_per_simulation=1,
 		subtract_last_hop_upfront_fee_for_honest_payments=True,
 		jammer_must_route_via_nodes=[],
-		max_target_hops_per_route=10):
+		max_target_hops_per_route=10,
+		max_route_length=10):
 		'''
 			- ln_model
 				An instance of LNModel to run the simulations with.
@@ -60,6 +60,9 @@ class Simulator:
 
 			- max_target_hops_per_route
 				Max desired number of target hops in a jammer's route.
+
+			- max_route_length
+				Max number of hops per route.
 		'''
 		self.ln_model = ln_model
 		self.target_hops = target_hops
@@ -75,6 +78,7 @@ class Simulator:
 		self.num_runs_per_simulation = num_runs_per_simulation
 		self.jammer_must_route_via_nodes = jammer_must_route_via_nodes
 		self.max_target_hops_per_route = max_target_hops_per_route
+		self.max_route_length = max_route_length
 
 	def run_simulation_series(self, schedule_generation_funciton, upfront_base_coeff_range, upfront_rate_coeff_range):
 		simulation_series_results = []
@@ -140,7 +144,7 @@ class Simulator:
 			logger.debug(f"Got event: {event}")
 			is_jam = event.desired_result is False
 			if is_jam:
-				logger.debug(f"Start handling jam batch at time {self.now}")
+				logger.info(f"Start handling jam batch at time {self.now}")
 				if self.jammer_must_route_via_nodes:
 					self.handle_jam_with_static_route(event)
 				else:
@@ -169,6 +173,7 @@ class Simulator:
 		assert(rg.has_edge(must_nodes[-1], "JammerReceiver"))
 		#route_from_sender = nx.shortest_path(rg, "JammerSender", must_nodes[0])
 		#route_to_receiver = nx.shortest_path(rg, must_nodes[-1], "JammerReceiver")
+		# FIXME: ensure that routes fit for jams here?
 		route = ["JammerSender"] + must_nodes + ["JammerReceiver"]
 		num_sent, num_failed, num_reached_receiver, last_node_reached, first_node_not_reached = self.send_jam_via_route(event, route)
 		assert(first_node_not_reached is not None)
@@ -184,11 +189,17 @@ class Simulator:
 	def handle_jam_with_router(self, event):
 		max_num_routes = self.max_num_routes_jamming
 		target_hops_unjammed = self.target_hops.copy()
-		router = Router(self.ln_model, event.amount, event.sender, event.receiver)
-		router.update_route_generator(target_hops_unjammed)  # , max_route_length=8)
+		router = Router(
+			self.ln_model,
+			event.amount,
+			event.sender,
+			event.receiver,
+			self.max_target_hops_per_route,
+			self.max_route_length)
+		router.update_route_generator(target_hops_unjammed)
 		for num_route in range(max_num_routes):
-			logger.debug(f"---Trying jamming route {num_route + 1} of max {max_num_routes}")
-			logger.debug(f"Definitely unjammed {len(target_hops_unjammed)} / {len(self.target_hops)} target hops: {target_hops_unjammed}")
+			logger.debug(f"Trying jamming route {num_route + 1} of max {max_num_routes}")
+			logger.debug(f"At least {len(target_hops_unjammed)} / {len(self.target_hops)} target hops still unjammed")
 			if not target_hops_unjammed:
 				logger.debug(f"No unjammed target hops left, no need to try further routes")
 				break
@@ -197,7 +208,7 @@ class Simulator:
 			except StopIteration:
 				logger.warning(f"No route from {event.sender} to {event.receiver} via any of {target_hops_unjammed}")
 				break
-			logger.debug(f"Found route of length {len(route)}: {route}")
+			#logger.debug(f"Found route of length {len(route)}")
 			num_sent, num_failed, num_reached_receiver, last_node_reached, first_node_not_reached = self.send_jam_via_route(event, route)
 			self.num_sent_total += num_sent
 			self.num_failed_total += num_failed
@@ -205,7 +216,6 @@ class Simulator:
 			if first_node_not_reached is not None:
 				jammed_hop = (last_node_reached, first_node_not_reached)
 				logger.debug(f"Jammed hop {jammed_hop}")
-				#assert(None not in jammed_hop)
 				if "JammerSender" in jammed_hop or "JammerReceiver" in jammed_hop:
 					logger.warning(f"Jammer's node is in a jammed hop {jammed_hop}. Assign more slots to the jammer!")
 				assert(jammed_hop in target_hops_unjammed or jammed_hop not in self.target_hops)
@@ -225,15 +235,17 @@ class Simulator:
 					logger.debug(f"Hop {jammed_hop} may not be fully jammed!")
 					logger.debug(f"Jammed hop {jammed_hop} occurs {Router.num_hop_occurs_in_path(jammed_hop, route)} times in route {route}")
 			else:
-				logger.warning(f"All jams reached receiver for route {route}")
-				logger.warning(f"Allow for more attempts per route (now at {self.max_num_attempts_per_route_jamming})!")
+				logger.debug(f"All jams reached receiver for route {route}")
+				#logger.debug(f"Allow for more attempts per route (now at {self.max_num_attempts_per_route_jamming})!")
+				target_hops_unjammed_in_this_route = [hop for hop in Router.get_hops(route) if hop in self.target_hops and not self.ln_model.hop_is_jammed(hop, self.now)]
+				logger.debug(f"Target hops status: {[(Router.shorten_ids(hop), self.ln_model.get_hop(*hop).get_jammed_status(hop[0] < hop[1], self.now)) for hop in target_hops_unjammed_in_this_route]}")
 			logger.debug(f"Target hops jammed status: {[(hop, self.ln_model.get_hop(*hop).get_jammed_status(hop[0] < hop[1], self.now)) for hop in self.target_hops]}")
 		if not self.all_target_hops_are_really_jammed():
 			target_hops_left_unjammed = [hop for hop in self.target_hops if not self.ln_model.hop_is_jammed(hop, self.now)]
 			# sic! num_routes, not (num_routes + 1): though we start at zero, we count the last interation which breaks before producing a route
-			logger.warning(f"Couldn't jam hops {target_hops_left_unjammed} after {num_route} routes at time {self.now}.")
+			logger.warning(f"Couldn't jam {len(target_hops_left_unjammed)} target hops after {num_route} routes at time {self.now}.")
 		else:
-			logger.debug(f"All target hops are jammed at time {self.now}")
+			logger.info(f"All target hops are jammed at time {self.now}")
 
 	def send_jam_via_route(self, event, route):
 		assert(event.desired_result is False)
@@ -264,13 +276,42 @@ class Simulator:
 					break
 		return num_sent, num_failed, num_reached_receiver, last_node_reached, first_node_not_reached
 
+	def get_shortest_route_via_nodes(self, nodes, amount):
+		route = [nodes[0]]
+		logger.debug(f"Constructing route via {nodes} for {amount}")
+		for (u_node, d_node) in Router.get_hops(nodes):
+			logger.debug(f"Constructing sub-route {u_node}-{d_node}")
+			sub_routes = self.ln_model.get_shortest_routes(u_node, d_node, amount)
+			if sub_routes is None:
+				logger.debug(f"No route from {u_node} to {d_node} for amount {amount}")
+				return None
+			else:
+				try:
+					sub_route = next(sub_routes)
+					logger.debug(f"Sub-route is: {sub_route}")
+				except StopIteration:
+					logger.debug(f"Sub-route from {u_node} to {d_node} for amount {amount} is None")
+					return None
+				if sub_route is None:
+					return None
+				else:
+					route.extend(sub_route[1:])
+					logger.debug(f"Route now is: {route}")
+		logger.debug(f"Final route is: {route}")
+		return route
+
 	def handle_honest_payment(self, event):
 		if event.must_route_via_nodes:
-			route = [event.sender] + event.must_route_via_nodes + [event.receiver]
-			num_sent, num_failed, num_reached_receiver = self.send_honest_payment_via_route(event, route)
-			self.num_sent_total += num_sent
-			self.num_failed_total += num_failed
-			self.num_reached_receiver_total += num_reached_receiver
+			must_nodes = [event.sender] + event.must_route_via_nodes + [event.receiver]
+			route = self.get_shortest_route_via_nodes(must_nodes, event.amount)
+			if route is None:
+				logger.debug(f"Couldn't handle honest payment {event}, moving on")
+			else:
+				logger.debug(f"Constructed route from {event.sender} to {event.receiver} via given nodes {event.must_route_via_nodes}: {route}")
+				num_sent, num_failed, num_reached_receiver = self.send_honest_payment_via_route(event, route)
+				self.num_sent_total += num_sent
+				self.num_failed_total += num_failed
+				self.num_reached_receiver_total += num_reached_receiver
 		else:
 			routes = self.ln_model.get_shortest_routes(event.sender, event.receiver, event.amount)
 			for num_route in range(self.max_num_routes_honest):
@@ -297,6 +338,14 @@ class Simulator:
 			pre_receiver, receiver = route[-2], route[-1]
 			logger.debug(f"Pre-receiver, receiver: {pre_receiver} {receiver} ")
 			chosen_cid = self.ln_model.get_cheapest_cid_in_hop(pre_receiver, receiver, event.amount)
+			logger.debug(f"Suggested cheapest cid: {chosen_cid}")
+			hop = self.ln_model.get_hop(pre_receiver, receiver)
+			logger.debug(f"Hop of this cid: {hop}")
+			channel = hop.get_channel(chosen_cid)
+			logger.debug(f"Channel of chosen cid {chosen_cid}: {channel}")
+			direction = pre_receiver < receiver
+			logger.debug(f"We need direction {direction}")
+			chosen_ch_dir = channel.directions[direction]
 			chosen_ch_dir = self.ln_model.get_hop(receiver, pre_receiver).get_channel(chosen_cid).directions[pre_receiver < receiver]
 			receiver_amount = Simulator.body_for_amount(event.amount, chosen_ch_dir.upfront_fee_function)
 		logger.debug(f"Receiver will get {receiver_amount} in payment body")
@@ -310,7 +359,7 @@ class Simulator:
 				attempt_id=str(attempt_num))
 			num_sent += 1
 			if reached_receiver:
-				logger.debug(f"Payment reached receiver after {attempt_num} attempts")
+				logger.debug(f"Payment reached the receiver after {attempt_num + 1} attempts")
 				num_reached_receiver += 1
 				break
 			elif error_type is not None:
@@ -320,10 +369,16 @@ class Simulator:
 
 	def create_payment(self, route, amount, processing_delay, desired_result):
 		p, u_nodes, d_nodes = None, route[:-1], route[1:]
+		logger.debug("------")
 		for u_node, d_node in reversed(list(zip(u_nodes, d_nodes))):
-			#logger.debug(f"Wrapping payment for fee policy from {u_node} to {d_node}")
+			logger.debug(f"Wrapping payment for fee policy from {u_node} to {d_node}")
 			chosen_cid = self.ln_model.get_cheapest_cid_in_hop(u_node, d_node, amount)
-			chosen_ch_dir = self.ln_model.get_hop(u_node, d_node).get_channel(chosen_cid).directions[u_node < d_node]
+			logger.debug(f"Suggested cheapest cid: {chosen_cid}")
+			hop = self.ln_model.get_hop(u_node, d_node)
+			logger.debug(f"Hop of this cid: {hop}")
+			channel = hop.get_channel(chosen_cid)
+			logger.debug(f"Channel of chosen cid {chosen_cid}: {channel}")
+			chosen_ch_dir = channel.directions[u_node < d_node]
 			is_last_hop = p is None
 			p = Payment(
 				downstream_payment=p,
@@ -358,5 +413,4 @@ class Simulator:
 			logger.debug(f"Couldn't reach precision {precision} in body for amount {target_amount}!")
 			logger.debug(f"Made {num_step} of {max_steps} allowed.")
 			assert(num_step == max_steps)
-		logger.debug(f"{num_step}")
 		return body

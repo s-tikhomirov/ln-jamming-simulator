@@ -150,6 +150,10 @@ class LNModel:
 		return self.channel_graph.nodes[node][fee_type.value]
 
 	def get_hop(self, u_node, d_node):
+		assert(u_node != d_node)
+		if not self.channel_graph.has_edge(u_node, d_node):
+			logger.debug(f"No edge in channel graph between {u_node} {d_node}")
+		assert(self.channel_graph.has_edge(u_node, d_node))
 		return self.channel_graph.get_edge_data(u_node, d_node)["hop"]
 
 	def get_routing_graph_edge_data(self, u_node, d_node):
@@ -198,7 +202,9 @@ class LNModel:
 	def get_cheapest_cid_in_hop(self, u_node, d_node, amount):
 		# TODO: think about the logic of jamming vs choosing cheapest channel
 		# what happens after the cheapest channel is jammed?
+		logger.debug(f"Choosing cheapest cid in hop from {u_node} to {d_node}")
 		hop = self.get_hop(u_node, d_node)
+		#logger.debug(f"Hop: {hop}")
 		return hop.get_cheapest_cid(amount, direction=(u_node < d_node))
 
 	def get_prob_balance_failure(self, u_node, d_node, cid, amount):
@@ -237,14 +243,16 @@ class LNModel:
 			Apply all in-flight htlcs with timestamp < now.
 			This is done after the simulation is complete.
 		'''
-		# Note: we iterate through the edges of the directed routing graph,
-		# but we look up HTLC data in the corresponding undirected channel graph.
-		# UPD: check if this still needs to hold!
-		for (u_node, d_node) in self.routing_graph.edges():
-			#logger.debug(f"Resolving HTLCs from {u_node} to {d_node}")
-			hop = self.get_hop(u_node, d_node)
+		# Note: (node_1, node_2) are not ordered.
+		# We iterate through all edges in the CHANNEL graph and release HTLC for both directions, if present.
+		# The direction to resolve the HTLC in is taken from the HTLC itself.
+		# The order of (node_1, node_2) plays no role here!
+		for (node_1, node_2) in self.channel_graph.edges():
+			#logger.debug(f"Resolving HTLCs between {node_1} and {node_2}")
+			hop = self.get_hop(node_1, node_2)
 			for ch in hop.get_channels():
-				for direction in (dir0, dir1):
+				for (u_node, d_node) in ((node_1, node_2), (node_2, node_1)):
+					direction = u_node < d_node
 					ch_dir = ch.directions[direction]
 					if ch_dir is not None:
 						while not ch_dir.is_empty():
@@ -275,7 +283,7 @@ class LNModel:
 
 	def hop_is_jammed(self, hop, now):
 		ch_dirs = self.get_ch_dirs(hop)
-		return all(ch_dir.is_jammed(now) for ch_dir in ch_dirs)
+		return all(ch_dir.is_jammed(now) if ch_dir is not None else True for ch_dir in ch_dirs)
 
 	def reset_in_flight_htlcs(self):
 		logger.debug("Resetting all in-flight HTLCs")
@@ -369,15 +377,12 @@ class LNModel:
 			last_node_reached, first_node_not_reached = d_node, None
 			if payment.desired_result is False:
 				error_type = ErrorType.FAILED_DELIBERATELY
+			logger.debug(f"temporarily saved HTLCs: {tmp_hops_to_unstored_htlcs}")
 			for u_node, d_node in hops:
 				if (u_node, d_node) in tmp_hops_to_unstored_htlcs:
 					for chosen_cid, direction, resolution_time, in_flight_htlc in tmp_hops_to_unstored_htlcs[(u_node, d_node)]:
-						#logger.debug(f"Storing HTLC in channel {chosen_cid} from {u_node} to {d_node} to resolve at time {resolution_time}: {in_flight_htlc}")
-						ch_dir = self.get_hop(u_node, d_node).get_channel(chosen_cid).directions[u_node < d_node]
-						# calling ensure free slot once more in case of a circular route!
-						# with a circular route, we may have more than one HTLC to store
-						# for a channel that has only one free slot, so we need to free up more slots, if possible
-						#has_free_slot, resolution_time, released_htlc = ch_dir.ensure_free_slot(now)
+						logger.debug(f"Storing HTLC in channel {chosen_cid} from {u_node} to {d_node} to resolve at time {resolution_time}: {in_flight_htlc}")
+						ch_dir = self.get_hop(u_node, d_node).get_channel(chosen_cid).directions[direction]
 						ch_dir.store_htlc(resolution_time, in_flight_htlc)
 
 		assert(reached_receiver or error_type is not None)
