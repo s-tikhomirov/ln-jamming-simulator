@@ -18,8 +18,8 @@ class GenericSchedule:
 		A schedule of Events (to-be payments) to be executed by a Simulator.
 	'''
 
-	def __init__(self, end_time=0):
-		self.end_time = end_time
+	def __init__(self, duration=0):
+		self.end_time = duration
 		self.schedule = PriorityQueue()
 
 	def get_num_events(self):
@@ -58,7 +58,7 @@ class HonestSchedule(GenericSchedule):
 
 	def __init__(
 		self,
-		end_time,
+		duration,
 		senders,
 		receivers,
 		amount_function=honest_amount_function,
@@ -88,7 +88,7 @@ class HonestSchedule(GenericSchedule):
 			- must_route_via_nodes
 				A tuple of (consecutive) nodes that the payment must be routed through.
 		'''
-		GenericSchedule.__init__(self, end_time)
+		GenericSchedule.__init__(self, duration)
 		t = 0
 		while t <= self.end_time:
 			sender = choice(senders)
@@ -108,11 +108,11 @@ class JammingSchedule(GenericSchedule):
 
 	def __init__(
 		self,
-		end_time,
+		duration,
 		jam_sender="JammerSender",
 		jam_receiver="JammerReceiver",
 		hop_to_jam_with_own_batch=[]):
-		GenericSchedule.__init__(self, end_time)
+		GenericSchedule.__init__(self, duration)
 		jam_amount = ProtocolParams["DUST_LIMIT"]
 		jam_delay = PaymentFlowParams["JAM_DELAY"]
 		if hop_to_jam_with_own_batch:

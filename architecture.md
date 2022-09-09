@@ -40,7 +40,7 @@ The results are accumulated in a JSON object such as:
     "params": {
         "scenario": "wheel",
         "num_target_hops": 8,
-        "simulation_duration": 30,
+        "duration": 30,
         "num_runs_per_simulation": 10,
         "success_base_fee": 1,
         "success_fee_rate": 5e-06,

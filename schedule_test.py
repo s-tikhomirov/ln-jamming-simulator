@@ -7,7 +7,7 @@ from event import Event
 @pytest.fixture
 def example_schedule():
 	h_sch = HonestSchedule(
-		end_time=10,
+		duration=10,
 		senders=["Alice"],
 		receivers=["Bob"],
 		amount_function=lambda: 1000,
@@ -40,7 +40,7 @@ def test_schedule_get_put(example_schedule):
 
 
 def test_get_all_events():
-	sch = GenericSchedule(end_time=10)
+	sch = GenericSchedule(duration=10)
 	assert(sch.get_num_events() == 0)
 	assert(sch.get_event() == (None, None))
 	sch.put_event(1, Event("Alice", "Bob", 1000, 2, True))
@@ -60,7 +60,7 @@ def test_get_all_events():
 def test_event_same_sender_receiver():
 	# we don't include events into schedule with the same sender and receiver
 	sch = HonestSchedule(
-		end_time=10,
+		duration=10,
 		senders=["Alice"],
 		receivers=["Alice"],
 		amount_function=lambda: 1000,
@@ -72,7 +72,7 @@ def test_event_same_sender_receiver():
 
 def test_populate_schedule_with_one_event():
 	sch = HonestSchedule(
-		end_time=0,
+		duration=0,
 		senders=["Alice"],
 		receivers=["Bob"],
 		amount_function=lambda: 1000,
@@ -83,7 +83,7 @@ def test_populate_schedule_with_one_event():
 
 
 def test_generate_honest_schedule():
-	h_sch = HonestSchedule(end_time=0, senders=["Alice"], receivers=["Bob"])
+	h_sch = HonestSchedule(duration=0, senders=["Alice"], receivers=["Bob"])
 	assert(h_sch.get_num_events() == 1)
 	time, event = h_sch.get_event()
 	assert(time == 0)
@@ -93,7 +93,7 @@ def test_generate_honest_schedule():
 
 
 def test_generate_jamming_schedule():
-	j_sch = JammingSchedule(end_time=0)
+	j_sch = JammingSchedule(duration=0)
 	assert(j_sch.get_num_events() == 1)
 	time, event = j_sch.get_event()
 	assert(time == 0)
@@ -103,7 +103,7 @@ def test_generate_jamming_schedule():
 
 
 def test_generate_jamming_schedule_hop_to_jam_with_own_batch():
-	j_sch = JammingSchedule(end_time=0, hop_to_jam_with_own_batch=(("Alice", "Bob"), ("Charlie", "Dave")))
+	j_sch = JammingSchedule(duration=0, hop_to_jam_with_own_batch=(("Alice", "Bob"), ("Charlie", "Dave")))
 	assert(j_sch.get_num_events() == 2)
 	all_events = j_sch.get_all_events()
 	times = [elem[0] for elem in all_events]

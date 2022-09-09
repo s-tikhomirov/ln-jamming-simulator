@@ -7,7 +7,7 @@ from enumtypes import ErrorType, FeeType
 from channel import Channel
 from hop import Hop
 from htlc import InFlightHtlc
-from params import K, M, ProtocolParams
+from params import K, M, ProtocolParams, FeeParams
 from utils import generate_id
 
 import logging
@@ -108,7 +108,16 @@ class LNModel:
 		for node in send_to_nodes:
 			if not ("JammerSender" in self.routing_graph and "JammerSender" in self.routing_graph.predecessors(node)):
 				logger.debug(f"Opening a channel from JammerSender to {node}")
-				self.add_edge(src="JammerSender", dst=node, capacity=capacity, num_slots=num_slots)
+				# We set default (non-zero) success fees for jammer's sending channels.
+				# Fee is set by the other node; we assume it sets a default fee.
+				# TODO: Should we set the upfront fee here too?
+				self.add_edge(
+					src="JammerSender",
+					dst=node,
+					capacity=capacity,
+					success_base_fee=FeeParams["SUCCESS_BASE"],
+					success_fee_rate=FeeParams["SUCCESS_RATE"],
+					num_slots=num_slots)
 		for node in receive_from_nodes:
 			if (not ("JammerReceiver" in self.routing_graph and node in self.routing_graph.predecessors("JammerReceiver"))):
 				logger.debug(f"Opening a channel from {node} to JammerReceiver")
@@ -289,10 +298,12 @@ class LNModel:
 
 			# Fail if the payment doesn't pay sufficient fees
 			zero_success_fee = is_last_hop
+			'''
 			for fee_type in (FeeType.UPFRONT, FeeType.SUCCESS):
 				fee_required = chosen_ch_in_dir.requires_fee(fee_type, p, zero_success_fee)
 				fee_paid = p.pays_fee(fee_type)
 				logger.debug(f"{fee_type} fee at {chosen_cid} required / offered: {fee_required} / {fee_paid}")
+			'''
 			if not chosen_ch_in_dir.enough_total_fee(p, zero_success_fee):
 				error_type = ErrorType.LOW_FEE
 				break
@@ -314,7 +325,7 @@ class LNModel:
 			#logger.debug(f"Temporarily saved HTLCs: {unstored_htlcs_for_hop}")
 			for (u_node, d_node) in unstored_htlcs_for_hop:
 				for chosen_cid, direction, resolution_time, in_flight_htlc in unstored_htlcs_for_hop[(u_node, d_node)]:
-					logger.debug(f"Storing HTLC in channel {chosen_cid} from {u_node} to {d_node} to resolve at time {resolution_time}: {in_flight_htlc}")
+					logger.debug(f"Storing HTLC at {u_node}-{d_node} ({chosen_cid}) to resolve at {resolution_time} (now is {now}): {in_flight_htlc}")
 					ch_in_dir = self.get_hop(u_node, d_node).get_channel(chosen_cid).in_direction(direction)
 					ch_in_dir.push_htlc(resolution_time, in_flight_htlc)
 		else:

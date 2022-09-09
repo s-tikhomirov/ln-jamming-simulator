@@ -81,13 +81,23 @@ class Simulator:
 		self.max_target_hops_per_route = max_target_hops_per_route
 		self.max_route_length = max_route_length
 
-	def run_simulation_series(self, schedule_generation_funciton, upfront_base_coeff_range, upfront_rate_coeff_range):
+	def run_simulation_series(
+		self,
+		schedule_generation_function,
+		duration,
+		upfront_base_coeff_range,
+		upfront_rate_coeff_range,
+		normalize_results_for_duration=False):
+		'''
+			Run a series of simulations, iteration through ranges of upfront fee coefficient pairs.
+		'''
 		simulation_series_results = []
+		self.normalize_results_for_duration = normalize_results_for_duration
 		for upfront_base_coeff in upfront_base_coeff_range:
 			for upfront_rate_coeff in upfront_rate_coeff_range:
 				logger.info(f"Starting simulation with upfront fee coefficients: base {upfront_base_coeff}, rate {upfront_rate_coeff}")
 				self.ln_model.set_upfront_fee_from_coeff_for_all(upfront_base_coeff, upfront_rate_coeff)
-				stats, revenues = self.run_simulation(schedule_generation_funciton)
+				stats, revenues = self.run_simulation(schedule_generation_function, duration, normalize_results_for_duration)
 				result = {
 					"upfront_base_coeff": upfront_base_coeff,
 					"upfront_rate_coeff": upfront_rate_coeff,
@@ -97,11 +107,9 @@ class Simulator:
 				simulation_series_results.append(result)
 		return simulation_series_results
 
-	def run_simulation(self, schedule_generation_funciton):
+	def run_simulation(self, schedule_generation_function, duration, normalize_results_for_duration=False):
 		'''
-			Run a simulation.
-			A simulation includes multiple runs as specified in num_runs_per_simulation.
-			The results are averaged.
+			Run a simulation self.num_runs_per_simulation times and average results.
 		'''
 		tmp_num_sent, tmp_num_failed, tmp_num_reached_receiver = [], [], []
 		tmp_revenues = {node: [] for node in self.ln_model.channel_graph.nodes}
@@ -109,16 +117,21 @@ class Simulator:
 			logger.debug(f"Simulation {i + 1} of {self.num_runs_per_simulation}")
 			# we can't generate schedules out of cycle because they get depleted during execution
 			# (PriorityQueue does not support copying.)
-			schedule = schedule_generation_funciton()
+			schedule = schedule_generation_function(duration)
 			num_sent, num_failed, num_reached_receiver = self.execute_schedule(schedule)
 			logger.debug(f"{num_sent} sent, {num_failed} failed, {num_reached_receiver} reached receiver")
-			tmp_num_sent.append(num_sent)
-			tmp_num_failed.append(num_failed)
-			tmp_num_reached_receiver.append(num_reached_receiver)
+			normalizer = duration if normalize_results_for_duration else 1
+
+			def normalized(value):
+				assert normalizer > 0
+				return value if normalizer == 1 else value / normalizer
+			tmp_num_sent.append(normalized(num_sent))
+			tmp_num_failed.append(normalized(num_failed))
+			tmp_num_reached_receiver.append(normalized(num_reached_receiver))
 			for node in self.ln_model.channel_graph.nodes:
-				upfront_revenue = self.ln_model.get_revenue(node, FeeType.UPFRONT)
-				success_revenue = self.ln_model.get_revenue(node, FeeType.SUCCESS)
-				tmp_revenues[node].append(upfront_revenue + success_revenue)
+				tmp_revenues[node].append(normalized(
+					self.ln_model.get_revenue(node, FeeType.UPFRONT)
+					+ self.ln_model.get_revenue(node, FeeType.SUCCESS)))
 		stats = {
 			"num_sent": mean(tmp_num_sent),
 			"num_failed": mean(tmp_num_failed),

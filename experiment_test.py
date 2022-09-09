@@ -1,6 +1,7 @@
 from math import ceil
 import pytest
 import json
+from functools import partial
 
 from lnmodel import LNModel
 from enumtypes import FeeType
@@ -44,13 +45,10 @@ def example_sim():
 def test_simulator_jamming_schedule(example_sim):
 	# order of target hop is important to invoke looped route logic
 	target_hops = [("Charlie", "Hub"), ("Hub", "Bob"), ("Alice", "Hub"), ("Hub", "Dave")]
-	duration = 1
-
-	def schedule_generation_function_jamming():
-		j_sch = JammingSchedule(
-			end_time=duration,
-			hop_to_jam_with_own_batch=target_hops)
-		return j_sch
+	schedule_generation_function_jamming = partial(
+		lambda duration: JammingSchedule(
+			duration=duration,
+			hop_to_jam_with_own_batch=target_hops))
 	simulator = example_sim
 	simulator.target_hops = target_hops
 	simulator.max_num_routes_jamming = 10
@@ -61,8 +59,10 @@ def test_simulator_jamming_schedule(example_sim):
 		send_to_nodes=["Alice", "Charlie", "Hub"],
 		receive_from_nodes=["Dave", "Hub"],
 		num_slots=(DEFAULT_NUM_SLOTS_PER_CHANNEL_IN_DIRECTION + 1) * len(target_hops))
+	duration = 1
 	results = simulator.run_simulation_series(
 		schedule_generation_function_jamming,
+		duration=duration,
 		upfront_base_coeff_range=[0.001],
 		upfront_rate_coeff_range=[0.1])
 	logger.info(f"{results}")
@@ -71,17 +71,16 @@ def test_simulator_jamming_schedule(example_sim):
 
 
 def test_simulator_honest_schedule(example_sim):
-
-	def schedule_generation_function_honest():
-		h_sch = HonestSchedule(
-			end_time=300,
+	schedule_generation_function_honest = partial(
+		lambda duration: HonestSchedule(
+			duration=duration,
 			senders=["Alice"],
 			receivers=["Bob"],
-			must_route_via_nodes=["Hub"])
-		return h_sch
+			must_route_via_nodes=["Hub"]))
 	simulator = example_sim
 	results = simulator.run_simulation_series(
 		schedule_generation_function_honest,
+		duration=300,
 		upfront_base_coeff_range=[0, 0.001],
 		upfront_rate_coeff_range=[0, 0.1])
 	logger.info(f"{results}")
@@ -108,11 +107,9 @@ def test_simulator_honest_schedule(example_sim):
 
 def test_simulator_jamming_fixed_route(example_sim):
 	target_hops = [("Alice", "Hub"), ("Hub", "Dave")]
-	duration = 8
-
-	def schedule_generation_function_jamming():
-		j_sch = JammingSchedule(end_time=duration)
-		return j_sch
+	schedule_generation_function_jamming = partial(
+		lambda duration: JammingSchedule(
+			duration=duration))
 	simulator = example_sim
 	simulator.target_hops = target_hops
 	simulator.jammer_must_route_via_nodes = ["Alice", "Hub", "Dave"]
@@ -120,8 +117,10 @@ def test_simulator_jamming_fixed_route(example_sim):
 		send_to_nodes=["Alice"],
 		receive_from_nodes=["Dave"],
 		num_slots=(DEFAULT_NUM_SLOTS_PER_CHANNEL_IN_DIRECTION + 1) * len(target_hops))
+	duration = 8
 	results = simulator.run_simulation_series(
 		schedule_generation_function_jamming,
+		duration=duration,
 		upfront_base_coeff_range=[0],
 		upfront_rate_coeff_range=[0])
 	assert_jam_results_correctness(simulator, duration, results)
