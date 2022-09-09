@@ -223,13 +223,13 @@ class LNModel:
 								self.shift_revenue(from_node, to_node, FeeType.SUCCESS, htlc.success_fee)
 						#logger.debug(f"No more HTLCs to resolve up to time ({cutoff_time})")
 
-	def attempt_send_payment(self, payment, sender, now, attempt_id=""):
+	def attempt_send_payment(self, payment, sender, now, attempt_num=0):
 		'''
 			Try sending a payment.
 			The route is encoded within the payment,
 			apart from the sender, which is provided as a separate argument.
 		'''
-		payment_attempt_id = payment.id + "-" + attempt_id
+		payment_attempt_id = payment.id + "-" + str(attempt_num)
 		logger.debug(f"{sender} makes payment attempt {payment_attempt_id}")
 		last_node_reached, first_node_not_reached = sender, payment.downstream_node
 		# A temporary data structure to store HTLCs before we know if the payment has reached the receiver.
@@ -240,6 +240,7 @@ class LNModel:
 		while not reached_receiver:
 			u_node, d_node = d_node, p.downstream_node
 			last_node_reached, first_node_not_reached = u_node, d_node
+			is_last_hop = p.downstream_payment is None
 
 			logger.debug(f"Trying to route via cheapest channel from {u_node} to {d_node}")
 			hop = self.get_hop(u_node, d_node)
@@ -253,7 +254,8 @@ class LNModel:
 				# TODO: what happens after the cheapest channel is jammed?
 				chosen_ch = hop.get_cheapest_channel_really_can_forward(direction, now, p.get_amount())
 				chosen_ch_in_dir = chosen_ch.in_direction(direction)
-				logger.debug(f"Chosen channel {chosen_ch.get_cid()}")
+				chosen_cid = chosen_ch.get_cid()
+				logger.debug(f"Chosen channel {chosen_cid}")
 				# Construct an HTLC to keep in a temporary dictionary until we know if we reach the receiver
 				in_flight_htlc = InFlightHtlc(payment_attempt_id, p.success_fee, p.desired_result)
 				unstored_htlcs_for_hop[(u_node, d_node)].append((chosen_ch.get_cid(), direction, now + p.processing_delay, in_flight_htlc))
@@ -285,7 +287,15 @@ class LNModel:
 					error_type = ErrorType.LOW_BALANCE
 					break
 
-			# TODO: introduce "low fee" error type
+			# Fail if the payment doesn't pay sufficient fees
+			zero_success_fee = is_last_hop
+			for fee_type in (FeeType.UPFRONT, FeeType.SUCCESS):
+				fee_required = chosen_ch_in_dir.requires_fee(fee_type, p, zero_success_fee)
+				fee_paid = p.pays_fee(fee_type)
+				logger.debug(f"{fee_type} fee at {chosen_cid} required / offered: {fee_required} / {fee_paid}")
+			if not chosen_ch_in_dir.enough_total_fee(p, zero_success_fee):
+				error_type = ErrorType.LOW_FEE
+				break
 
 			# Account for upfront fees
 			self.shift_revenue(u_node, d_node, FeeType.UPFRONT, p.upfront_fee)

@@ -38,8 +38,16 @@ def test_manual_payment_creation(example_payment_upfront_fee_function, example_p
 		desired_result=True,
 		processing_delay=1,
 		last_hop_body=100)
-	p_bc = Payment(p_cd, "Charlie", example_payment_upfront_fee_function, example_payment_success_fee_function)
-	p_ab = Payment(p_bc, "Bob", example_payment_upfront_fee_function, example_payment_success_fee_function)
+	p_bc = Payment(
+		downstream_payment=p_cd,
+		downstream_node="Charlie",
+		upfront_fee_function=example_payment_upfront_fee_function,
+		success_fee_function=example_payment_success_fee_function)
+	p_ab = Payment(
+		downstream_payment=p_bc,
+		downstream_node="Bob",
+		upfront_fee_function=example_payment_upfront_fee_function,
+		success_fee_function=example_payment_success_fee_function)
 	for p in [p_ab, p_bc, p_cd]:
 		assert(p.processing_delay == 1)
 		assert(p.desired_result is True)

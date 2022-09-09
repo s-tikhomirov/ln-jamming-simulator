@@ -279,7 +279,7 @@ class Simulator:
 				p,
 				event.sender,
 				self.now,
-				attempt_id=str(attempt_num))
+				attempt_num)
 			assert(error_type is not None)
 			num_sent += 1
 			if error_type is not None:
@@ -376,7 +376,7 @@ class Simulator:
 				p,
 				event.sender,
 				self.now,
-				attempt_id=str(attempt_num))
+				attempt_num)
 			num_sent += 1
 			if reached_receiver:
 				logger.debug(f"Payment reached the receiver after {attempt_num + 1} attempts")
@@ -410,8 +410,7 @@ class Simulator:
 			p = Payment(
 				downstream_payment=p,
 				downstream_node=d_node,
-				upfront_fee_function=chosen_ch_in_dir.upfront_fee_function,
-				success_fee_function=chosen_ch_in_dir.success_fee_function,
+				channel_in_direction=chosen_ch_in_dir,
 				desired_result=desired_result if is_last_hop else None,
 				processing_delay=processing_delay if is_last_hop else None,
 				last_hop_body=amount if is_last_hop else None)

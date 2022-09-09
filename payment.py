@@ -1,4 +1,5 @@
 from utils import generate_id
+from enumtypes import FeeType
 
 import logging
 logger = logging.getLogger(__name__)
@@ -15,8 +16,9 @@ class Payment:
 		self,
 		downstream_payment,
 		downstream_node,
-		upfront_fee_function,
-		success_fee_function,
+		channel_in_direction=None,
+		upfront_fee_function=None,
+		success_fee_function=None,
 		desired_result=None,
 		processing_delay=None,
 		last_hop_body=None):
@@ -28,6 +30,9 @@ class Payment:
 
 				- downstream_node
 					A node to forward the payment to.
+
+				- channel_in_direction
+					A ChannelInDirection object to take fee functions from, if present.
 
 				- upfront_fee_function
 					A function to calculate the upfront fee from payment _amount_.
@@ -48,6 +53,13 @@ class Payment:
 					How much the receiver will get if the payment succeeds.
 
 		'''
+		# Either channel in direction or fee functions must be provided, but not both!
+		ch_in_dir_provided = channel_in_direction is not None
+		fee_functions_provided = upfront_fee_function is not None and success_fee_function is not None
+		assert ch_in_dir_provided != fee_functions_provided
+		if ch_in_dir_provided:
+			upfront_fee_function = channel_in_direction.upfront_fee_function
+			success_fee_function = channel_in_direction.success_fee_function
 		# for the last node, there is no downstream payment
 		is_last_hop = downstream_payment is None
 		# for an intermediary node, the desired result, final amount, and processing delay are already determined
@@ -79,11 +91,24 @@ class Payment:
 		downstream_upfront_fee = 0 if downstream_payment is None else downstream_payment.upfront_fee
 		self.upfront_fee = upfront_fee_function(self.get_amount()) + downstream_upfront_fee
 
+	def get_body(self):
+		return self.body
+
+	# pays fee for this hop vs for all downstream hops?
+	def pays_fee(self, fee_type):
+		if fee_type == FeeType.UPFRONT:
+			return self.upfront_fee
+		elif fee_type == FeeType.SUCCESS:
+			return self.success_fee
+
+	def pays_total_fee(self):
+		return self.pays_fee(FeeType.UPFRONT) + self.pays_fee(FeeType.SUCCESS)
+
 	def get_amount(self):
-		return self.body + self.success_fee
+		return self.get_body() + self.pays_fee(FeeType.SUCCESS)
 
 	def get_amount_plus_upfront_fee(self):
-		return self.get_amount() + self.upfront_fee
+		return self.get_amount() + self.pays_fee(FeeType.UPFRONT)
 
 	def __repr__(self):  # pragma: no cover
 		s = "\nPayment with amount: 	" + str(self.amount)

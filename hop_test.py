@@ -16,7 +16,7 @@ def test_hop_create():
 	assert(ch.is_enabled_in_direction(Direction.Alph))
 	assert(not ch.is_enabled_in_direction(Direction.NonAlph))
 	ch.set_fee_in_direction(Direction.Alph, FeeType.SUCCESS, base_fee=1, fee_rate=0.01)
-	assert(ch.get_total_fee_in_direction(Direction.Alph, amount=100) == 2)
+	assert ch.in_direction(Direction.Alph).requires_fee_for_body(FeeType.SUCCESS, 100) == 2
 	ch_1 = Channel(capacity=2000, cid="cid1", num_slots_per_direction=2)
 	hop.add_channel(ch_1)
 	assert(hop.has_channel("cid0"))
@@ -28,7 +28,7 @@ def test_hop_create():
 		condition=lambda ch: ch.really_can_forward_in_direction_at_time(Direction.Alph, time=0, amount=1500))
 	assert(len(chs_can_forward_1500) == 1)
 	chs_by_fee_for_100 = hop.get_channels_with_condition(
-		sorting_function=lambda ch: ch.get_total_fee_in_direction(Direction.Alph, 100))
+		sorting_function=lambda ch: ch.in_direction(Direction.Alph).requires_total_fee_for_body(100))
 	assert len(chs_by_fee_for_100) == 2
 	assert chs_by_fee_for_100[0].capacity == 1000
 

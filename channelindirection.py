@@ -98,10 +98,37 @@ class ChannelInDirection:
 		assert not self.all_slots_free()
 		return self.slots.queue[0][0]
 
-	def get_total_fee(self, amount):
-		success_fee = self.success_fee_function(amount)
-		upfront_fee = self.upfront_fee_function(amount + success_fee)
-		return success_fee + upfront_fee
+	def requires_fee_for_body(self, fee_type, body, zero_success_fee=False):
+		success_fee = 0 if zero_success_fee else self.success_fee_function(body)
+		if fee_type == FeeType.UPFRONT:
+			amount = body + success_fee
+			return self.upfront_fee_function(amount)
+		elif fee_type == FeeType.SUCCESS:
+			return success_fee
+
+	def requires_total_fee_for_body(self, body, zero_success_fee=False):
+		return (
+			self.requires_fee_for_body(FeeType.UPFRONT, body, zero_success_fee)
+			+ self.requires_fee_for_body(FeeType.SUCCESS, body, zero_success_fee))
+
+	def requires_fee(self, fee_type, payment, zero_success_fee=False):
+		# Last hop in route charges zero success fee by definition: next node does not have to forward anything.
+		# Upfront fee, however, is still being paid, even on the last hop!
+		# (It may have been subtracted from the amount at payment creation.)
+		return self.requires_fee_for_body(fee_type, payment.get_body(), zero_success_fee)
+
+	def requires_total_fee(self, payment, zero_success_fee=False):
+		return (
+			self.requires_fee(FeeType.SUCCESS, payment, zero_success_fee)
+			+ self.requires_fee(FeeType.UPFRONT, payment, zero_success_fee))
+
+	def enough_fee(self, fee_type, payment, zero_success_fee=False):
+		return payment.pays_fee(fee_type) >= self.requires_fee(fee_type, payment, zero_success_fee)
+
+	def enough_total_fee(self, payment, zero_success_fee=False):
+		return (
+			self.enough_fee(FeeType.SUCCESS, payment, zero_success_fee)
+			and self.enough_fee(FeeType.UPFRONT, payment, zero_success_fee))
 
 	def pop_htlc(self):
 		assert not self.all_slots_free()

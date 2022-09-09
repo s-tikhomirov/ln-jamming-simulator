@@ -56,7 +56,7 @@ class Channel:
 
 	def get_total_fee_in_direction(self, direction, amount):
 		assert self.is_enabled_in_direction(direction)
-		return self.in_direction(direction).get_total_fee(amount)
+		return self.in_direction(direction).requires_total_fee(amount)
 
 	def set_deliberate_failure_behavior_in_direction(self, direction, prob, spoofing_error_type=ErrorType.FAILED_DELIBERATELY):
 		assert self.is_enabled_in_direction(direction)

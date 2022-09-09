@@ -7,13 +7,8 @@ def test_set_get_fee():
 	cd = ChannelInDirection(num_slots=2)
 	cd.set_fee(FeeType.UPFRONT, base_fee=1, fee_rate=0.01)
 	cd.set_fee(FeeType.SUCCESS, base_fee=2, fee_rate=0.02)
-	body = 100
-	assert(cd.upfront_fee_function(body) == 2)
-	assert(cd.success_fee_function(body) == 4)
-	success_fee = cd.success_fee_function(body)
-	body_plus_success_fee = body + cd.success_fee_function(body)
-	upfront_fee = cd.upfront_fee_function(body_plus_success_fee)
-	assert(cd.get_total_fee(body) == success_fee + upfront_fee)
+	assert cd.upfront_fee_function(100) == 2
+	assert cd.success_fee_function(100) == 4
 
 
 def test_channel_direction():
