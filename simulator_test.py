@@ -56,7 +56,7 @@ def test_no_routes():
 	sch = GenericSchedule(duration=1)
 	sch.put_event(0, Event("Alice", "Dave", 100, 7, False))
 	sch.put_event(0, Event("Alice", "Dave", 100, 7, True))
-	num_sent, num_failed, num_reached_receiver = sim.execute_schedule(sch)
+	num_sent, num_failed, num_reached_receiver, num_hit_target_node = sim.execute_schedule(sch)
 	assert(num_sent == 0)
 
 
@@ -72,7 +72,7 @@ def test_not_enough_attempts():
 		subtract_last_hop_upfront_fee_for_honest_payments=False)
 	sch = GenericSchedule(duration=1)
 	sch.put_event(0, Event("Alice", "Dave", 100, 7, False))
-	num_sent, num_failed, num_reached_receiver = sim.execute_schedule(sch)
+	num_sent, num_failed, num_reached_receiver, num_hit_target_node = sim.execute_schedule(sch)
 	assert(num_sent == 1)
 	assert(num_sent == num_failed == num_reached_receiver)
 
@@ -91,7 +91,7 @@ def test_jammer_jammed():
 		subtract_last_hop_upfront_fee_for_honest_payments=False)
 	sch = GenericSchedule(duration=1)
 	sch.put_event(0, Event("JammerSender", "Dave", 100, 7, False))
-	num_sent, num_failed, num_reached_receiver = sim.execute_schedule(sch)
+	num_sent, num_failed, num_reached_receiver, num_hit_target_node = sim.execute_schedule(sch)
 	assert(num_sent == 2)
 	assert(num_failed == 2)
 	assert(num_reached_receiver == 1)
@@ -102,7 +102,7 @@ def test_simulator_one_successful_payment():
 	sch = GenericSchedule(duration=10)
 	event = Event("Alice", "Dave", 100, 1, True)
 	sch.put_event(0, event)
-	num_sent, num_failed, num_reached_receiver = sim.execute_schedule(sch)
+	num_sent, num_failed, num_reached_receiver, num_hit_target_node = sim.execute_schedule(sch)
 	#example_simulator.ln_model.report_revenues()
 	assert(num_sent == 1)
 	assert(num_failed == 0)
@@ -141,7 +141,7 @@ def test_simulator_one_jam_batch():
 	sim = get_example_sim()
 	sch = GenericSchedule(duration=1)
 	sch.put_event(0, Event("Alice", "Dave", 100, 7, False))
-	num_sent, num_failed, num_reached_receiver = sim.execute_schedule(sch)
+	num_sent, num_failed, num_reached_receiver, num_hit_target_node = sim.execute_schedule(sch)
 	assert(num_sent == 3)
 	assert(num_failed == 3)
 	assert(num_reached_receiver == 2)
@@ -182,7 +182,7 @@ def test_simulator_end_htlc_resolution():
 	sch = GenericSchedule(duration=10)
 	sch.put_event(0, Event("Alice", "Dave", 100, 5, True))
 	sch.put_event(0, Event("Alice", "Dave", 100, 15, True))
-	num_sent, num_failed, num_reached_receiver = sim.execute_schedule(sch)
+	num_sent, num_failed, num_reached_receiver, num_hit_target_node = sim.execute_schedule(sch)
 	assert(num_sent == 2)
 	# the first payment succeeded, the second was in-flight at cutoff time
 	# it has neither succeeded nor failed
@@ -229,7 +229,7 @@ def test_simulator_with_random_schedule():
 		duration=60,
 		senders=["Alice"],
 		receivers=["Dave"])
-	num_sent, num_failed, num_reached_receiver = sim.execute_schedule(sch)
+	num_sent, num_failed, num_reached_receiver, num_hit_target_node = sim.execute_schedule(sch)
 	assert(num_sent > 0)
 	assert_final_revenue_correctness(sim, num_sent)
 	#example_simulator.ln_model.report_revenues()
@@ -254,7 +254,7 @@ def test_simulator_jamming():
 	jam_processing_delay = 4
 	sch.put_event(0, Event("Alice", "Dave", 100, jam_processing_delay, False))
 	sim.target_node_pair = (("Mary", "Charlie"))
-	num_sent, num_failed, num_reached_receiver = sim.execute_schedule(sch)
+	num_sent, num_failed, num_reached_receiver, num_hit_target_node = sim.execute_schedule(sch)
 	a_rev_upfront = sim.ln_model.get_revenue("Alice", FeeType.UPFRONT)
 	a_rev_success = sim.ln_model.get_revenue("Alice", FeeType.SUCCESS)
 	b_rev_upfront = sim.ln_model.get_revenue("Mary", FeeType.UPFRONT)
@@ -345,7 +345,7 @@ def test_error_response_honest():
 	sch.put_event(0, event)
 	max_num_attempts_per_route_honest = 5
 	sim.max_num_attempts_per_route_honest = max_num_attempts_per_route_honest
-	num_sent, num_failed, num_reached_receiver = sim.execute_schedule(sch)
+	num_sent, num_failed, num_reached_receiver, num_hit_target_node = sim.execute_schedule(sch)
 	assert(num_sent == max_num_attempts_per_route_honest)
 	assert(num_failed == num_sent)
 	assert(num_reached_receiver == 0)
@@ -375,7 +375,7 @@ def test_error_response_jamming():
 	event = Event("Alice", "Dave", 100, jam_processing_delay, False)
 	sch.put_event(0, event)
 	logger.debug("Start executing schedule")
-	num_sent, num_failed, num_reached_receiver = sim.execute_schedule(sch)
+	num_sent, num_failed, num_reached_receiver, num_hit_target_node = sim.execute_schedule(sch)
 	logger.debug("Finished executing schedule")
 	assert(num_sent == (1 + floor(duration / jam_processing_delay)) * max_num_attempts_per_route_jamming)
 	assert(num_failed == num_sent)

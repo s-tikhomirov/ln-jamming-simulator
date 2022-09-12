@@ -352,7 +352,7 @@ def test_balance_failure():
 		desired_result=True,
 		processing_delay=1,
 		last_hop_body=100)
-	reached_receiver, last_node_reached, first_node_not_reached, error_type = ln_model.attempt_send_payment(p_ab, sender="Alice", now=0)
+	reached_receiver, last_node_reached, first_node_not_reached, error_type, nodes_hit_count = ln_model.attempt_send_payment(p_ab, sender="Alice", now=0)
 	assert(not reached_receiver)
 	assert(last_node_reached == "Alice")
 	assert(first_node_not_reached == "Bob")

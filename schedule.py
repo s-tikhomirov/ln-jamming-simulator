@@ -1,13 +1,9 @@
 from queue import PriorityQueue
 from random import choice
+from numpy.random import exponential, lognormal
 
 from event import Event
-from params import (
-	honest_amount_function,
-	honest_proccesing_delay_function,
-	honest_generation_delay_function,
-	ProtocolParams,
-	PaymentFlowParams)
+from params import ProtocolParams, PaymentFlowParams
 
 import logging
 logger = logging.getLogger(__name__)
@@ -61,10 +57,10 @@ class HonestSchedule(GenericSchedule):
 		duration,
 		senders,
 		receivers,
-		amount_function=honest_amount_function,
+		amount_function=lambda: lognormal(mean=PaymentFlowParams["AMOUNT_MU"], sigma=PaymentFlowParams["AMOUNT_SIGMA"]),
 		desired_result_function=lambda: True,
-		payment_processing_delay_function=honest_proccesing_delay_function,
-		payment_generation_delay_function=honest_generation_delay_function,
+		payment_processing_delay_function=lambda: PaymentFlowParams["MIN_DELAY"] + exponential(PaymentFlowParams["EXPECTED_EXTRA_DELAY"]),
+		payment_generation_delay_function=lambda: exponential(PaymentFlowParams["HONEST_PAYMENT_EVERY_SECONDS"]),
 		must_route_via_nodes=[]):
 		'''
 			- senders

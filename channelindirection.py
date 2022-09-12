@@ -2,7 +2,6 @@ from queue import PriorityQueue
 from functools import partial
 
 from enumtypes import ErrorType, FeeType
-from params import generic_fee_function
 
 import logging
 logger = logging.getLogger(__name__)
@@ -52,8 +51,12 @@ class ChannelInDirection:
 		self.deliberately_fail_prob = deliberately_fail_prob
 		self.spoofing_error_type = spoofing_error_type
 
+	@staticmethod
+	def generic_fee_function(base, rate, amount):
+		return base + rate * amount
+
 	def set_fee(self, fee_type, base_fee, fee_rate):
-		fee_function = partial(lambda a: generic_fee_function(base_fee, fee_rate, a))
+		fee_function = partial(lambda a: ChannelInDirection.generic_fee_function(base_fee, fee_rate, a))
 		if fee_type == FeeType.UPFRONT:
 			self.upfront_base_fee = base_fee
 			self.upfront_fee_rate = fee_rate

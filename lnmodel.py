@@ -1,6 +1,6 @@
 import networkx as nx
 from random import random
-import collections
+from collections import defaultdict
 
 from direction import Direction
 from enumtypes import ErrorType, FeeType
@@ -69,6 +69,16 @@ class LNModel:
 		logger.info(f"Channel graph has {self.channel_graph.number_of_nodes()} nodes and {self.channel_graph.number_of_edges()} channels.")
 		logger.info(f"Routing graph has {self.routing_graph.number_of_nodes()} nodes and {self.routing_graph.number_of_edges()} channels.")
 		self.reset_all_revenues()
+
+	def set_capacity(self, src, dst, capacity):
+		target_hop = self.get_hop(src, dst)
+		assert target_hop.get_num_channels() == 1
+		target_channel = [ch for ch in target_hop.get_all_channels()][0]
+		target_cid = target_channel.get_cid()
+		logger.debug(f"Setting capacity of target channel {target_cid} to {capacity}")
+		target_channel.set_capacity(capacity)
+		# we must set the new capacity to routing graph as well
+		self.routing_graph[src][dst][target_cid]["capacity"] = capacity
 
 	def add_edge(self, src, dst, capacity, cid=None, upfront_base_fee=0, upfront_fee_rate=0, success_base_fee=0, success_fee_rate=0, num_slots=None):
 		if cid is None:
@@ -150,7 +160,7 @@ class LNModel:
 
 	def get_shortest_routes(self, sender, receiver, amount):
 		route = None
-		logger.debug(f"Finding route from {sender} to {receiver}")
+		logger.debug(f"Finding route from {sender} to {receiver} for {amount}")
 		routing_graph = self.get_routing_graph_for_amount(amount)
 		if sender not in routing_graph or receiver not in routing_graph:
 			logger.warning(f"Can't find route from {sender} to {receiver}!")
@@ -158,7 +168,7 @@ class LNModel:
 			logger.warning(f"Sender {receiver} in graph? {receiver in routing_graph}")
 			yield from ()
 		elif not nx.has_path(routing_graph, sender, receiver):
-			logger.warning(f"No path from {sender} to {receiver}")
+			logger.debug(f"No path from {sender} to {receiver} for {amount}")
 			yield from ()
 		else:
 			routes = nx.all_shortest_paths(routing_graph, sender, receiver)
@@ -241,9 +251,10 @@ class LNModel:
 		payment_attempt_id = payment.id + "-" + str(attempt_num)
 		logger.debug(f"{sender} makes payment attempt {payment_attempt_id}")
 		last_node_reached, first_node_not_reached = sender, payment.downstream_node
+		nodes_hit_count = defaultdict(int)
 		# A temporary data structure to store HTLCs before we know if the payment has reached the receiver.
 		# If not, we discard in-flight HTLCs along the route.
-		unstored_htlcs_for_hop = collections.defaultdict(list)
+		unstored_htlcs_for_hop = defaultdict(list)
 		p, d_node = payment, sender
 		reached_receiver, error_type = False, None
 		while not reached_receiver:
@@ -311,6 +322,8 @@ class LNModel:
 			# Account for upfront fees
 			self.shift_revenue(u_node, d_node, FeeType.UPFRONT, p.upfront_fee)
 
+			nodes_hit_count[u_node] += 1
+
 			# Unwrap the payment for the next hop
 			p = p.downstream_payment
 			reached_receiver = p is None
@@ -331,8 +344,9 @@ class LNModel:
 		else:
 			logger.debug(f"Payment {payment_attempt_id} has failed at {last_node_reached} and has NOT reached the receiver")
 
+		logger.debug(f"Hit count: {nodes_hit_count}")
 		assert reached_receiver or error_type is not None
-		return reached_receiver, last_node_reached, first_node_not_reached, error_type
+		return reached_receiver, last_node_reached, first_node_not_reached, error_type, nodes_hit_count
 
 	def report_revenues(self):  # pragma: no cover
 		print("\n\n*** Revenues ***")

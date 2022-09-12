@@ -3,15 +3,19 @@ from time import time
 from random import seed
 import sys
 
-from params import FeeParams, ProtocolParams
+from params import FeeParams, ProtocolParams, PaymentFlowParams
 from scenario import Scenario
 
 import logging
 logger = logging.getLogger(__name__)
 
 
-DEFAULT_UPFRONT_BASE_COEFF_RANGE = [0, 0.001, 0.01]
-DEFAULT_UPFRONT_RATE_COEFF_RANGE = [0, 0.1, 0.5]
+DEFAULT_UPFRONT_BASE_COEFF_RANGE = [n / 1000 for n in range(10 + 1)]
+DEFAULT_UPFRONT_RATE_COEFF_RANGE = [0]
+
+DEFAULT_UPFRONT_BASE_COEFF_RANGE = [0.001]
+DEFAULT_UPFRONT_RATE_COEFF_RANGE = [0]
+
 
 ABCD_SNAPSHOT_FILENAME = "./snapshots/listchannels_abcd.json"
 WHEEL_SNAPSHOT_FILENAME = "./snapshots/listchannels_wheel.json"
@@ -58,7 +62,7 @@ def main():
 	)
 	parser.add_argument(
 		"--max_num_attempts_honest",
-		default=1,
+		default=3,
 		type=int,
 		help="Number of attempts per honest payment in case of balance or deliberate failures."
 	)
@@ -100,6 +104,24 @@ def main():
 		type=float,
 		default=DEFAULT_UPFRONT_RATE_COEFF_RANGE,
 		help="A list of values for upfront base fee coefficient."
+	)
+	parser.add_argument(
+		"--target_channel_capacity",
+		default=None,
+		type=int,
+		help="Capacity of a target channel, in single-channel simulations."
+	)
+	parser.add_argument(
+		"--honest_payment_every_seconds",
+		default=PaymentFlowParams["HONEST_PAYMENT_EVERY_SECONDS"],
+		type=int,
+		help="Honest payment flow (default is set in params)."
+	)
+	parser.add_argument(
+		"--num_jamming_batches",
+		default=10,
+		type=int,
+		help="Num jamming batches to extrapolate from."
 	)
 	parser.add_argument(
 		"--compact_output",
@@ -167,6 +189,7 @@ def main():
 				honest_must_route_via_nodes=["Hub"])
 		scenario.run(
 			duration=args.duration,
+			num_jamming_batches=args.num_jamming_batches,
 			upfront_base_coeff_range=args.upfront_base_coeff_range,
 			upfront_rate_coeff_range=args.upfront_rate_coeff_range,
 			max_num_attempts_per_route_honest=args.max_num_attempts_honest,
@@ -174,7 +197,9 @@ def main():
 			max_num_routes_honest=args.max_num_routes_honest,
 			num_runs_per_simulation=args.num_runs_per_simulation,
 			max_target_hops_per_route=ProtocolParams["MAX_ROUTE_LENGTH"] - 2,
-			max_route_length=ProtocolParams["MAX_ROUTE_LENGTH"])
+			max_route_length=ProtocolParams["MAX_ROUTE_LENGTH"],
+			honest_payment_every_seconds=args.honest_payment_every_seconds,
+			target_channel_capacity=args.target_channel_capacity)
 	elif args.scenario == "real":
 		#big_node = "02ad6fb8d693dc1e4569bcedefadf5f72a931ae027dc0f0c544b34c1c6f3b9a02b"
 		small_node = "0263a6d2f0fed7b1e14d01a0c6a6a1c0fae6e0907c0ac415574091e7839a00405b"
@@ -186,15 +211,15 @@ def main():
 			honest_must_route_via_nodes=[target_node])
 		scenario.run(
 			duration=args.duration,
-			num_jamming_batches_to_extrapolate_from=3,
+			num_jamming_batches=args.num_jamming_batches,
 			upfront_base_coeff_range=args.upfront_base_coeff_range,
 			upfront_rate_coeff_range=args.upfront_rate_coeff_range,
 			max_num_attempts_per_route_honest=args.max_num_attempts_honest,
 			max_num_attempts_per_route_jamming=args.max_num_attempts_jamming,
 			max_num_routes_honest=args.max_num_routes_honest,
 			num_runs_per_simulation=args.num_runs_per_simulation,
-			max_target_hops_per_route=7,
-			max_route_length=10,
+			max_target_hops_per_route=4,
+			max_route_length=6,
 			compact_output=True)
 	else:
 		logger.error(f"Not yet properly implemented for scenario {args.scenario}!")

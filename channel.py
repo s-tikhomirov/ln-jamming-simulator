@@ -12,7 +12,7 @@ class Channel:
 	def __init__(self, capacity, cid=None, num_slots_per_direction=None):
 		cid = cid if cid is not None else generate_id()
 		self.cid = cid
-		self.capacity = capacity
+		self.set_capacity(capacity)
 		self.channel_in_direction = {Direction.Alph: None, Direction.NonAlph: None}
 		if num_slots_per_direction is not None:
 			for direction in (Direction.Alph, Direction.NonAlph):
@@ -23,6 +23,10 @@ class Channel:
 
 	def get_capacity(self):
 		return self.capacity
+
+	def set_capacity(self, capacity):
+		# modify the routing graph in the LNModel accordingly!
+		self.capacity = capacity
 
 	def in_direction(self, direction):
 		return self.channel_in_direction[direction]

@@ -1,24 +1,7 @@
 from math import log
-from numpy.random import exponential, lognormal
 
 K = 1000
 M = K * K
-
-
-def generic_fee_function(base, rate, amount):
-	return base + rate * amount
-
-
-def honest_amount_function():
-	return lognormal(mean=PaymentFlowParams["AMOUNT_MU"], sigma=PaymentFlowParams["AMOUNT_SIGMA"])
-
-
-def honest_proccesing_delay_function():
-	return PaymentFlowParams["MIN_DELAY"] + exponential(PaymentFlowParams["EXPECTED_EXTRA_DELAY"])
-
-
-def honest_generation_delay_function():
-	return exponential(PaymentFlowParams["HONEST_PAYMENT_EVERY_SECONDS"])
 
 
 PaymentFlowParams = {

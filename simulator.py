@@ -25,6 +25,7 @@ class Simulator:
 		max_num_attempts_per_route_jamming,
 		max_num_routes_honest,
 		max_num_routes_jamming=None,
+		target_node=None,
 		num_runs_per_simulation=1,
 		subtract_last_hop_upfront_fee_for_honest_payments=True,
 		jammer_must_route_via_nodes=[],
@@ -36,6 +37,9 @@ class Simulator:
 
 			- target_hops
 				What the attacker wants to jam.
+
+			- target_node
+				Only used for accounting of how many times we hit it during jamming.
 
 			- max_num_attempts_per_route_honest
 				The maximum number of attempts to send an honest payment.
@@ -67,6 +71,7 @@ class Simulator:
 		'''
 		self.ln_model = ln_model
 		self.target_hops = target_hops
+		self.target_node = target_node
 		self.max_num_attempts_per_route_honest = max_num_attempts_per_route_honest
 		self.max_num_attempts_per_route_jamming = max_num_attempts_per_route_jamming
 		self.max_num_routes_honest = max_num_routes_honest
@@ -87,17 +92,23 @@ class Simulator:
 		duration,
 		upfront_base_coeff_range,
 		upfront_rate_coeff_range,
+		num_runs_per_simulation=None,
 		normalize_results_for_duration=False):
 		'''
 			Run a series of simulations, iteration through ranges of upfront fee coefficient pairs.
 		'''
 		simulation_series_results = []
 		self.normalize_results_for_duration = normalize_results_for_duration
+		if num_runs_per_simulation is None:
+			num_runs_per_simulation = self.num_runs_per_simulation
+		total_num_simulations, simulation_num = len(upfront_base_coeff_range) * len(upfront_rate_coeff_range), 0
 		for upfront_base_coeff in upfront_base_coeff_range:
 			for upfront_rate_coeff in upfront_rate_coeff_range:
-				logger.info(f"Starting simulation with upfront fee coefficients: base {upfront_base_coeff}, rate {upfront_rate_coeff}")
+				simulation_num += 1
+				percent_done = round(100 * simulation_num / total_num_simulations)
+				logger.info(f"Starting simulation {simulation_num} / {total_num_simulations} ({percent_done} % done) with coeffs: base {upfront_base_coeff}, rate {upfront_rate_coeff}")
 				self.ln_model.set_upfront_fee_from_coeff_for_all(upfront_base_coeff, upfront_rate_coeff)
-				stats, revenues = self.run_simulation(schedule_generation_function, duration, normalize_results_for_duration)
+				stats, revenues = self.run_simulation(schedule_generation_function, duration, num_runs_per_simulation, normalize_results_for_duration)
 				result = {
 					"upfront_base_coeff": upfront_base_coeff,
 					"upfront_rate_coeff": upfront_rate_coeff,
@@ -107,18 +118,19 @@ class Simulator:
 				simulation_series_results.append(result)
 		return simulation_series_results
 
-	def run_simulation(self, schedule_generation_function, duration, normalize_results_for_duration=False):
+	def run_simulation(self, schedule_generation_function, duration, num_runs_per_simulation, normalize_results_for_duration=False):
 		'''
 			Run a simulation self.num_runs_per_simulation times and average results.
 		'''
-		tmp_num_sent, tmp_num_failed, tmp_num_reached_receiver = [], [], []
+		tmp_num_sent, tmp_num_failed, tmp_num_reached_receiver, tmp_num_hit_target_node = [], [], [], []
 		tmp_revenues = {node: [] for node in self.ln_model.channel_graph.nodes}
-		for i in range(self.num_runs_per_simulation):
-			logger.debug(f"Simulation {i + 1} of {self.num_runs_per_simulation}")
+		for i in range(num_runs_per_simulation):
+			logger.debug(f"Simulation {i + 1} of {num_runs_per_simulation}")
 			# we can't generate schedules out of cycle because they get depleted during execution
 			# (PriorityQueue does not support copying.)
 			schedule = schedule_generation_function(duration)
-			num_sent, num_failed, num_reached_receiver = self.execute_schedule(schedule)
+			num_sent, num_failed, num_reached_receiver, num_hit_target_node = self.execute_schedule(schedule)
+			logger.debug(f"Hit target node: {num_hit_target_node}")
 			logger.debug(f"{num_sent} sent, {num_failed} failed, {num_reached_receiver} reached receiver")
 			normalizer = duration if normalize_results_for_duration else 1
 
@@ -128,14 +140,17 @@ class Simulator:
 			tmp_num_sent.append(normalized(num_sent))
 			tmp_num_failed.append(normalized(num_failed))
 			tmp_num_reached_receiver.append(normalized(num_reached_receiver))
+			tmp_num_hit_target_node.append(normalized(num_hit_target_node))
 			for node in self.ln_model.channel_graph.nodes:
 				tmp_revenues[node].append(normalized(
 					self.ln_model.get_revenue(node, FeeType.UPFRONT)
 					+ self.ln_model.get_revenue(node, FeeType.SUCCESS)))
+		logger.info(f"Average hit target node {self.target_node}: {mean(tmp_num_hit_target_node)}")
 		stats = {
 			"num_sent": mean(tmp_num_sent),
 			"num_failed": mean(tmp_num_failed),
-			"num_reached_receiver": mean(tmp_num_reached_receiver)
+			"num_reached_receiver": mean(tmp_num_reached_receiver),
+			"num_hit_target_node": mean(tmp_num_hit_target_node)
 		}
 		revenues = {}
 		for node in self.ln_model.channel_graph.nodes:
@@ -147,6 +162,8 @@ class Simulator:
 		self.ln_model.reset_all_revenues()
 		self.now = -1
 		self.num_sent_total, self.num_failed_total, self.num_reached_receiver_total = 0, 0, 0
+		self.num_hit_target_node = 0
+		self.routes_by_length = dict.fromkeys(range(self.max_route_length), 0)
 
 	def execute_schedule(self, schedule):
 		self.reset()
@@ -162,7 +179,7 @@ class Simulator:
 			logger.debug(f"Got event: {event}")
 			is_jam = event.desired_result is False
 			if is_jam:
-				logger.info(f"Start handling jam batch at time {self.now}")
+				logger.debug(f"Start handling jam batch at time {self.now}")
 				if self.jammer_must_route_via_nodes:
 					self.handle_jam_with_static_route(event)
 				else:
@@ -176,14 +193,15 @@ class Simulator:
 			else:
 				self.handle_honest_payment(event)
 		if self.schedule.no_more_events():
-			logger.info(f"Depleted the schedule with end time {self.schedule.end_time}, last event was at {self.now}")
+			logger.debug(f"Depleted the schedule with end time {self.schedule.end_time}, last event was at {self.now}")
 		else:
-			logger.info(f"Reached schedule end time {self.schedule.end_time}, last event was at {self.now}")
+			logger.debug(f"Reached schedule end time {self.schedule.end_time}, last event was at {self.now}")
 		self.now = self.schedule.end_time
 		logger.debug(f"Finalizing in-flight HTLCs...")
 		self.ln_model.finalize_in_flight_htlcs(self.now)
-		logger.info(f"Schedule executed: {self.num_sent_total} sent, {self.num_failed_total} failed, {self.num_reached_receiver_total} reached receiver")
-		return self.num_sent_total, self.num_failed_total, self.num_reached_receiver_total
+		logger.debug(f"Schedule executed: {self.num_sent_total} sent, {self.num_failed_total} failed, {self.num_reached_receiver_total} reached receiver")
+		logger.info(f"Total times hit target node: {self.num_hit_target_node}")
+		return self.num_sent_total, self.num_failed_total, self.num_reached_receiver_total, self.num_hit_target_node
 
 	def handle_jam_with_static_route(self, event):
 		rg = self.ln_model.routing_graph
@@ -195,12 +213,13 @@ class Simulator:
 		#route_to_receiver = nx.shortest_path(rg, must_nodes[-1], "JammerReceiver")
 		# FIXME: ensure that routes fit for jams here?
 		route = ["JammerSender"] + must_nodes + ["JammerReceiver"]
-		num_sent, num_failed, num_reached_receiver, last_node_reached, first_node_not_reached = self.send_jam_via_route(event, route)
+		num_sent, num_failed, num_reached_receiver, last_node_reached, first_node_not_reached, num_hit_target_node = self.send_jam_via_route(event, route)
 		assert(first_node_not_reached is not None)
 		jammed_hop = (last_node_reached, first_node_not_reached)
 		self.num_sent_total += num_sent
 		self.num_failed_total += num_failed
 		self.num_reached_receiver_total += num_reached_receiver
+		self.num_hit_target_node += num_hit_target_node
 		logger.debug(f"Jammed hop {jammed_hop}")
 
 	def all_target_hops_are_really_jammed(self):
@@ -237,10 +256,11 @@ class Simulator:
 				logger.warning(f"No route from {event.sender} to {event.receiver} via any of {target_hops_unjammed}")
 				break
 			#logger.debug(f"Found route of length {len(route)}")
-			num_sent, num_failed, num_reached_receiver, last_node_reached, first_node_not_reached = self.send_jam_via_route(event, route)
+			num_sent, num_failed, num_reached_receiver, last_node_reached, first_node_not_reached, num_hit_target_node = self.send_jam_via_route(event, route)
 			self.num_sent_total += num_sent
 			self.num_failed_total += num_failed
 			self.num_reached_receiver_total += num_reached_receiver
+			self.num_hit_target_node += num_hit_target_node
 			if first_node_not_reached is not None:
 				jammed_hop = (last_node_reached, first_node_not_reached)
 				logger.debug(f"Jammed hop {jammed_hop}")
@@ -279,22 +299,23 @@ class Simulator:
 			logger.warning(f"Couldn't jam {len(target_hops_left_unjammed)} target hops after {num_route} routes at time {self.now}.")
 			logger.warning(f"Unjammed target hops: {self.get_jammed_status_of_hops(target_hops_left_unjammed)}")
 		else:
-			logger.info(f"All target hops are jammed at time {self.now}")
+			logger.debug(f"All target hops are jammed at time {self.now}")
 
 	def send_jam_via_route(self, event, route):
 		assert(event.desired_result is False)
 		logger.debug(f"Sending jam via {route}")
 		logger.debug(f"Receiver will get {event.amount} in payment body")
 		p = self.create_payment(route, event.amount, event.processing_delay, event.desired_result)
-		num_sent, num_failed, num_reached_receiver = 0, 0, 0
+		num_sent, num_failed, num_reached_receiver, num_hit_target_node = 0, 0, 0, 0
 		for attempt_num in range(self.max_num_attempts_per_route_jamming):
-			reached_receiver, last_node_reached, first_node_not_reached, error_type = self.ln_model.attempt_send_payment(
+			reached_receiver, last_node_reached, first_node_not_reached, error_type, nodes_hit_count = self.ln_model.attempt_send_payment(
 				p,
 				event.sender,
 				self.now,
 				attempt_num)
 			assert(error_type is not None)
 			num_sent += 1
+			num_hit_target_node += nodes_hit_count[self.target_node]
 			if error_type is not None:
 				num_failed += 1
 			assert(reached_receiver == (first_node_not_reached is None))
@@ -308,7 +329,7 @@ class Simulator:
 				elif error_type == ErrorType.NO_SLOTS:
 					logger.debug(f"Route {route} jammed at time {self.now}")
 					break
-		return num_sent, num_failed, num_reached_receiver, last_node_reached, first_node_not_reached
+		return num_sent, num_failed, num_reached_receiver, last_node_reached, first_node_not_reached, num_hit_target_node
 
 	def get_shortest_route_via_nodes(self, nodes, amount):
 		route = [nodes[0]]
@@ -385,7 +406,7 @@ class Simulator:
 		p = self.create_payment(route, last_hop_body, event.processing_delay, event.desired_result)
 		num_sent, num_failed, num_reached_receiver = 0, 0, 0
 		for attempt_num in range(self.max_num_attempts_per_route_honest):
-			reached_receiver, last_node_reached, first_node_not_reached, error_type = self.ln_model.attempt_send_payment(
+			reached_receiver, last_node_reached, first_node_not_reached, error_type, nodes_hit_count = self.ln_model.attempt_send_payment(
 				p,
 				event.sender,
 				self.now,

@@ -1,5 +1,6 @@
 import json
 import csv
+from numpy.random import exponential
 
 from params import FeeParams, ProtocolParams, PaymentFlowParams
 from lnmodel import LNModel
@@ -122,12 +123,28 @@ class Scenario:
 		num_runs_per_simulation,
 		max_target_hops_per_route,
 		max_route_length,
-		num_jamming_batches_to_extrapolate_from=None,
+		honest_payment_every_seconds=PaymentFlowParams["HONEST_PAYMENT_EVERY_SECONDS"],
+		target_channel_capacity=None,
+		num_jamming_batches=None,
 		compact_output=False):
+
+		if target_channel_capacity is not None:
+			logger.debug(f"Target channel capacity is given: {target_channel_capacity}")
+			assert len(self.target_hops) == 1
+			target_u_node, target_d_node = self.target_hops[0]
+			self.ln_model.set_capacity(target_u_node, target_d_node, target_channel_capacity)
+
+		if num_jamming_batches is not None:
+			# first batch at time 0, last batch at time (num_batches - 1) * jam_delay
+			jamming_duration = (num_jamming_batches - 1) * PaymentFlowParams["JAM_DELAY"]
+			logger.warning(f"Extrapolating jamming results from {num_jamming_batches} batches (equivalent jamming duration: {jamming_duration})")
+		else:
+			jamming_duration = duration
 
 		simulator = Simulator(
 			ln_model=self.ln_model,
 			target_hops=self.target_hops,
+			target_node=self.target_node,
 			max_num_attempts_per_route_honest=max_num_attempts_per_route_honest,
 			max_num_attempts_per_route_jamming=max_num_attempts_per_route_jamming,
 			max_num_routes_honest=max_num_routes_honest,
@@ -136,30 +153,24 @@ class Scenario:
 			max_target_hops_per_route=max_target_hops_per_route,
 			max_route_length=max_route_length)
 
-		logger.info("Starting jamming simulations")
-		if num_jamming_batches_to_extrapolate_from is not None:
-			# first batch at time 0, last batch at time (num_batches - 1) * jam_delay
-			jamming_duration = (num_jamming_batches_to_extrapolate_from - 1) * PaymentFlowParams["JAM_DELAY"]
-			logger.info(f"Extrapolating jamming results from {num_jamming_batches_to_extrapolate_from} batches (duration {jamming_duration})")
-		else:
-			jamming_duration = duration
-
+		logger.info(f"Starting jamming simulations with ranges: {upfront_base_coeff_range} {upfront_rate_coeff_range}")
 		results_jamming = simulator.run_simulation_series(
 			schedule_generation_function=(
 				lambda duration: JammingSchedule(duration=duration)),
 			duration=jamming_duration,
 			upfront_base_coeff_range=upfront_base_coeff_range,
 			upfront_rate_coeff_range=upfront_rate_coeff_range,
+			num_runs_per_simulation=1 if num_jamming_batches is not None else None,
 			normalize_results_for_duration=True)
 
-		logger.info("Starting honest simulations")
-
+		logger.info(f"Starting honest simulations with ranges: {upfront_base_coeff_range} {upfront_rate_coeff_range}")
 		results_honest = simulator.run_simulation_series(
 			schedule_generation_function=(
 				lambda duration: HonestSchedule(
 					duration=duration,
 					senders=self.honest_senders,
 					receivers=self.honest_receivers,
+					payment_generation_delay_function=lambda: exponential(honest_payment_every_seconds),
 					must_route_via_nodes=self.honest_must_route_via_nodes)),
 			duration=duration,
 			upfront_base_coeff_range=upfront_base_coeff_range,
@@ -172,12 +183,23 @@ class Scenario:
 			results_jamming = Scenario.get_compact_output(results_jamming, relevant_nodes)
 			results_honest = Scenario.get_compact_output(results_honest, relevant_nodes)
 
+		if self.target_node is not None:
+			target_nodes = [self.target_node]
+		else:
+			assert len(self.target_hops) == 1
+			target_nodes = list(self.target_hops[0])
+			logger.debug(f"Choosing ")
+		logger.debug(f"Deciding breakeven based on revenues of target node {target_nodes}")
+		breakeven_stats = Scenario.is_breakeven_reached(results_honest, results_jamming, target_nodes)
+
 		results = {
 			"params": {
 				"scenario": self.scenario_name,
 				"target_node": self.target_node,
 				"num_target_hops": len(self.target_hops),
 				"duration": duration,
+				"honest_payment_every_seconds": honest_payment_every_seconds,
+				"target_channel_capacity": target_channel_capacity,
 				"results_normalized": simulator.normalize_results_for_duration,
 				"num_runs_per_simulation": num_runs_per_simulation,
 				"set_default_success_fee": self.set_default_success_fee,
@@ -188,11 +210,11 @@ class Scenario:
 				"max_num_attempts_per_route_honest": max_num_attempts_per_route_honest,
 				"max_num_attempts_per_route_jamming": max_num_attempts_per_route_jamming,
 				"dust_limit": ProtocolParams["DUST_LIMIT"],
-				"honest_payment_every_seconds": PaymentFlowParams["HONEST_PAYMENT_EVERY_SECONDS"],
 				"min_processing_delay": PaymentFlowParams["MIN_DELAY"],
 				"expected_extra_processing_delay": PaymentFlowParams["EXPECTED_EXTRA_DELAY"],
 				"jam_delay": PaymentFlowParams["JAM_DELAY"]
 			},
+			"breakeven_stats": breakeven_stats,
 			"simulations": {
 				"honest": sorted(
 					results_honest,
@@ -205,6 +227,33 @@ class Scenario:
 			}
 		}
 		self.results = results
+
+	@staticmethod
+	def is_breakeven_reached(results_honest, results_jamming, target_nodes):
+		breakeven_stats = {}
+		for result_honest in results_honest:
+			upfront_base_coeff = result_honest["upfront_base_coeff"]
+			upfront_rate_coeff = result_honest["upfront_rate_coeff"]
+			# we assume that honest and jamming results are obtained from the same upfront coeff ranges
+			result_jamming = [res for res in results_jamming if (
+				res["upfront_base_coeff"] == upfront_base_coeff
+				and res["upfront_rate_coeff"] == upfront_rate_coeff
+			)][0]
+			revenue_honest = sum(result_honest["revenues"][node] for node in target_nodes)
+			revenue_jamming = sum(result_jamming["revenues"][node] for node in target_nodes)
+			if revenue_honest == 0:
+				logger.warning(f"Can't calculate jamming to honest ratio: honest revenue is zero!")
+				jamming_to_honest_revenue_ratio = None
+			else:
+				jamming_to_honest_revenue_ratio = revenue_jamming / revenue_honest
+			is_breakeven = jamming_to_honest_revenue_ratio > 1 if jamming_to_honest_revenue_ratio is not None else None
+			if upfront_base_coeff not in breakeven_stats:
+				breakeven_stats[upfront_base_coeff] = {}
+			if upfront_rate_coeff not in breakeven_stats[upfront_base_coeff]:
+				breakeven_stats[upfront_base_coeff][upfront_rate_coeff] = {}
+			breakeven_stats[upfront_base_coeff][upfront_rate_coeff]["is_breakeven"] = is_breakeven
+			breakeven_stats[upfront_base_coeff][upfront_rate_coeff]["jamming_to_honest_revenue_ratio"] = jamming_to_honest_revenue_ratio
+		return breakeven_stats
 
 	@staticmethod
 	def get_compact_output(results, relevant_nodes):
@@ -234,6 +283,23 @@ class Scenario:
 		nodes = sorted([node for node in next(iter(self.results["simulations"]["honest"]))["revenues"]])
 		with open("results/" + str(timestamp) + "-results" + ".csv", "w", newline="") as f:
 			writer = csv.writer(f, delimiter=",", quotechar="'", quoting=csv.QUOTE_MINIMAL)
+			for param_name in self.results["params"]:
+				writer.writerow([param_name, self.results["params"][param_name]])
+			writer.writerow("")
+			writer.writerow([
+				"upfront_base_coeff",
+				"upfront_rate_coeff",
+				"is_breakeven",
+				"jamming_to_honest_revenue_ratio"])
+			for base in self.results["breakeven_stats"]:
+				for rate in self.results["breakeven_stats"][base]:
+					writer.writerow([
+						base,
+						rate,
+						self.results["breakeven_stats"][base][rate]["is_breakeven"],
+						self.results["breakeven_stats"][base][rate]["jamming_to_honest_revenue_ratio"],
+					])
+			writer.writerow("")
 			for simulation_type in self.results["simulations"]:
 				revenue_titles = [simulation_type[:1] + "_" + node[:7] for node in nodes]
 				writer.writerow([
@@ -253,5 +319,3 @@ class Scenario:
 						result["stats"]["num_reached_receiver"]]
 						+ revenues)
 				writer.writerow("")
-			for param_name in self.results["params"]:
-				writer.writerow([param_name, self.results["params"][param_name]])
