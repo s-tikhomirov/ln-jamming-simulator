@@ -5,7 +5,7 @@ from numpy.random import exponential
 from params import FeeParams, ProtocolParams, PaymentFlowParams
 from lnmodel import LNModel
 from enumtypes import FeeType
-from simulator import Simulator
+from simulator import JammingSimulator, HonestSimulator
 from schedule import HonestSchedule, JammingSchedule
 
 import logging
@@ -126,7 +126,9 @@ class Scenario:
 		honest_payment_every_seconds=PaymentFlowParams["HONEST_PAYMENT_EVERY_SECONDS"],
 		target_channel_capacity=None,
 		num_jamming_batches=None,
-		compact_output=False):
+		compact_output=False,
+		normalize_results_for_duration=True,
+		extrapolate_jamming_revenues=False):
 
 		if target_channel_capacity is not None:
 			logger.debug(f"Target channel capacity is given: {target_channel_capacity}")
@@ -134,37 +136,49 @@ class Scenario:
 			target_u_node, target_d_node = self.target_hops[0]
 			self.ln_model.set_capacity(target_u_node, target_d_node, target_channel_capacity)
 
-		if num_jamming_batches is not None:
-			# first batch at time 0, last batch at time (num_batches - 1) * jam_delay
-			jamming_duration = (num_jamming_batches - 1) * PaymentFlowParams["JAM_DELAY"]
-			logger.warning(f"Extrapolating jamming results from {num_jamming_batches} batches (equivalent jamming duration: {jamming_duration})")
-		else:
-			jamming_duration = duration
+		if num_jamming_batches is None:
+			from math import ceil
+			num_jamming_batches = ceil(duration / PaymentFlowParams["JAM_DELAY"])
 
-		simulator = Simulator(
-			ln_model=self.ln_model,
-			target_hops=self.target_hops,
-			target_node=self.target_node,
-			max_num_attempts_per_route_honest=max_num_attempts_per_route_honest,
-			max_num_attempts_per_route_jamming=max_num_attempts_per_route_jamming,
-			max_num_routes_honest=max_num_routes_honest,
-			num_runs_per_simulation=num_runs_per_simulation,
-			jammer_must_route_via_nodes=self.jammer_must_route_via_nodes,
-			max_target_hops_per_route=max_target_hops_per_route,
-			max_route_length=max_route_length)
+		# first batch starts at time 0, last batch starts at time (num_batches - 1) * jam_delay
+		jamming_schedule_duration = (num_jamming_batches - 1) * PaymentFlowParams["JAM_DELAY"]
+		# we run the simulation up until num_batches * jam delay to let the last batch complete
+		jamming_simulation_duration = num_jamming_batches * PaymentFlowParams["JAM_DELAY"]
+
+		if extrapolate_jamming_revenues:
+			logger.info(f"Extrapolating jamming results from one upfront coefficient")
 
 		logger.info(f"Starting jamming simulations with ranges: {upfront_base_coeff_range} {upfront_rate_coeff_range}")
-		results_jamming = simulator.run_simulation_series(
+		logger.info(f"Schedule duration: {jamming_schedule_duration}")
+		logger.info(f"Simulation duration: {jamming_simulation_duration}")
+		logger.info(f"Number of jamming batches: {num_jamming_batches}")
+		j_sim = JammingSimulator(
+			ln_model=self.ln_model,
+			max_num_routes=None,
+			max_num_attempts_per_route=max_num_attempts_per_route_jamming,
+			max_route_length=max_route_length,
+			num_runs_per_simulation=1 if num_jamming_batches is not None else None,
+			target_hops=self.target_hops,
+			target_node=self.target_node,
+			max_target_hops_per_route=max_target_hops_per_route,
+			jammer_must_route_via_nodes=self.jammer_must_route_via_nodes)
+		results_jamming = j_sim.run_simulation_series(
 			schedule_generation_function=(
-				lambda duration: JammingSchedule(duration=duration)),
-			duration=jamming_duration,
+				lambda duration: JammingSchedule(duration=jamming_schedule_duration)),
+			duration=jamming_simulation_duration,
 			upfront_base_coeff_range=upfront_base_coeff_range,
 			upfront_rate_coeff_range=upfront_rate_coeff_range,
-			num_runs_per_simulation=1 if num_jamming_batches is not None else None,
-			normalize_results_for_duration=True)
+			normalize_results_for_duration=normalize_results_for_duration,
+			extrapolate_jamming_revenues=extrapolate_jamming_revenues)
 
 		logger.info(f"Starting honest simulations with ranges: {upfront_base_coeff_range} {upfront_rate_coeff_range}")
-		results_honest = simulator.run_simulation_series(
+		h_sim = HonestSimulator(
+			ln_model=self.ln_model,
+			max_num_routes=max_num_routes_honest,
+			max_num_attempts_per_route=max_num_attempts_per_route_honest,
+			max_route_length=max_route_length,
+			num_runs_per_simulation=num_runs_per_simulation)
+		results_honest = h_sim.run_simulation_series(
 			schedule_generation_function=(
 				lambda duration: HonestSchedule(
 					duration=duration,
@@ -175,7 +189,7 @@ class Scenario:
 			duration=duration,
 			upfront_base_coeff_range=upfront_base_coeff_range,
 			upfront_rate_coeff_range=upfront_rate_coeff_range,
-			normalize_results_for_duration=True)
+			normalize_results_for_duration=normalize_results_for_duration)
 
 		if compact_output:
 			assert self.target_node is not None
@@ -200,7 +214,7 @@ class Scenario:
 				"duration": duration,
 				"honest_payment_every_seconds": honest_payment_every_seconds,
 				"target_channel_capacity": target_channel_capacity,
-				"results_normalized": simulator.normalize_results_for_duration,
+				"results_normalized": normalize_results_for_duration,
 				"num_runs_per_simulation": num_runs_per_simulation,
 				"set_default_success_fee": self.set_default_success_fee,
 				"default_success_base_fee": self.default_success_base_fee,

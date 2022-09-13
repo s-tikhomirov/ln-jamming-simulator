@@ -3,7 +3,7 @@ import pytest
 
 from payment import Payment
 from lnmodel import LNModel
-from simulator import Simulator
+from simulator import JammingSimulator
 
 
 @pytest.fixture
@@ -114,13 +114,15 @@ def example_ln_model(example_snapshot_json):
 
 def test_route_payment_creation(example_ln_model):
 	route = ["Alice", "Bob", "Charlie", "Dave"]
-	sim = Simulator(
+	sim = JammingSimulator(
 		example_ln_model,
+		max_num_routes=1,
+		max_num_attempts_per_route=1,
+		max_route_length=20,
+		num_runs_per_simulation=1,
 		target_hops=("Bob", "Charlie"),
-		max_num_attempts_per_route_honest=1,
-		max_num_attempts_per_route_jamming=1,
-		max_num_routes_honest=1,
-		max_num_routes_jamming=1,)
+		target_node=None,
+		max_target_hops_per_route=1)
 	p = sim.create_payment(
 		route,
 		amount=100,
