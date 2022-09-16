@@ -120,9 +120,9 @@ def test_route_payment_creation(example_ln_model):
 		max_num_attempts_per_route=1,
 		max_route_length=20,
 		num_runs_per_simulation=1,
-		target_hops=("Bob", "Charlie"),
+		target_node_pairs=("Bob", "Charlie"),
 		target_node=None,
-		max_target_hops_per_route=1)
+		max_target_node_pairs_per_route=1)
 	p = sim.create_payment(
 		route,
 		amount=100,

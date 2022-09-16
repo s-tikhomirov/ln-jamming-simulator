@@ -2,6 +2,7 @@ import argparse
 from time import time
 from random import seed
 import sys
+import csv
 
 from params import FeeParams, ProtocolParams, PaymentFlowParams
 from scenario import Scenario
@@ -10,8 +11,8 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-DEFAULT_UPFRONT_BASE_COEFF_RANGE = [n / 10000 for n in range(20 + 1)]
-DEFAULT_UPFRONT_RATE_COEFF_RANGE = [n / 10 for n in range(10 + 1)]
+DEFAULT_UPFRONT_BASE_COEFF_RANGE = [n / 10000 for n in range(10 + 1)]
+DEFAULT_UPFRONT_RATE_COEFF_RANGE = [0]
 
 
 ABCD_SNAPSHOT_FILENAME = "./snapshots/listchannels_abcd.json"
@@ -79,7 +80,7 @@ def main():
 		"--max_num_routes_jamming",
 		default=None,
 		type=int,
-		help="Number of different routes per jam. By default, we try all routes until all target hops are jammed."
+		help="Number of different routes per jam. By default, we try all routes until all target node pairs are jammed."
 	)
 	parser.add_argument(
 		"--no_balance_failures",
@@ -109,9 +110,9 @@ def main():
 		help="Capacity of a target channel, in single-channel simulations."
 	)
 	parser.add_argument(
-		"--honest_payment_every_seconds",
-		default=PaymentFlowParams["HONEST_PAYMENT_EVERY_SECONDS"],
-		type=int,
+		"--honest_payments_per_second",
+		default=PaymentFlowParams["HONEST_PAYMENTS_PER_SECOND"],
+		type=float,
 		help="Honest payment flow (default is set in params)."
 	)
 	parser.add_argument(
@@ -119,6 +120,24 @@ def main():
 		default=None,
 		type=int,
 		help="Num jamming batches to extrapolate from."
+	)
+	parser.add_argument(
+		"--num_target_node_pairs",
+		default=None,
+		type=int,
+		help="The number of target node pairs to pick (adjacent to the target node)."
+	)
+	parser.add_argument(
+		"--max_target_node_pairs_per_route",
+		default=ProtocolParams["MAX_ROUTE_LENGTH"] - 3,
+		type=int,
+		help="The number of target node pairs to try to include into jammer's routes."
+	)
+	parser.add_argument(
+		"--max_route_length",
+		default=ProtocolParams["MAX_ROUTE_LENGTH"],
+		type=int,
+		help="The maximal route length (number of nodes)."
 	)
 	parser.add_argument(
 		"--extrapolate_jamming_revenues",
@@ -164,77 +183,98 @@ def main():
 		logger.debug(f"Initializing randomness seed: {args.seed}")
 		seed(args.seed)
 
-	if args.scenario in ("abcd", "wheel-hardcoded-route", "wheel"):
-		if args.scenario == "abcd":
-			scenario = Scenario(
-				scenario_name=args.scenario,
-				snapshot_filename=ABCD_SNAPSHOT_FILENAME,
-				honest_senders=["Alice"],
-				honest_receivers=["Dave"],
-				target_hops=[("Bob", "Charlie")])
-		elif args.scenario == "wheel-hardcoded-route":
-			scenario = Scenario(
-				scenario_name=args.scenario,
-				snapshot_filename=WHEEL_SNAPSHOT_FILENAME,
-				honest_senders=["Alice", "Charlie"],
-				honest_receivers=["Bob", "Dave"],
-				target_hops=[("Alice", "Hub"), ("Hub", "Bob"), ("Charlie", "Hub"), ("Hub", "Dave")],
-				jammer_sends_to_nodes=["Alice"],
-				jammer_receives_from_nodes=["Dave"],
-				honest_must_route_via_nodes=["Hub"],
-				jammer_must_route_via_nodes=["Alice", "Hub", "Bob", "Charlie", "Hub", "Dave"])
-		elif args.scenario == "wheel":
-			scenario = Scenario(
-				scenario_name=args.scenario,
-				snapshot_filename=WHEEL_SNAPSHOT_FILENAME,
-				honest_senders=["Alice", "Charlie"],
-				honest_receivers=["Bob", "Dave"],
-				target_node="Hub",
-				honest_must_route_via_nodes=["Hub"])
-		scenario.run(
-			duration=args.duration,
-			num_jamming_batches=args.num_jamming_batches,
-			upfront_base_coeff_range=args.upfront_base_coeff_range,
-			upfront_rate_coeff_range=args.upfront_rate_coeff_range,
-			max_num_attempts_per_route_honest=args.max_num_attempts_honest,
-			max_num_attempts_per_route_jamming=args.max_num_attempts_jamming,
-			max_num_routes_honest=args.max_num_routes_honest,
-			num_runs_per_simulation=args.num_runs_per_simulation,
-			max_target_hops_per_route=ProtocolParams["MAX_ROUTE_LENGTH"] - 2,
-			max_route_length=ProtocolParams["MAX_ROUTE_LENGTH"],
-			honest_payment_every_seconds=args.honest_payment_every_seconds,
-			target_channel_capacity=args.target_channel_capacity,
-			extrapolate_jamming_revenues=args.extrapolate_jamming_revenues)
+	assert args.scenario in ("abcd", "wheel-hardcoded-route", "wheel", "real")
+	if args.scenario == "abcd":
+		scenario = Scenario(
+			scenario_name=args.scenario,
+			snapshot_filename=ABCD_SNAPSHOT_FILENAME,
+			honest_senders=["Alice"],
+			honest_receivers=["Dave"],
+			target_node_pairs=[("Bob", "Charlie")],
+			honest_must_route_via_nodes=["Bob", "Charlie"],
+			jammer_must_route_via_nodes=["Bob", "Charlie"])
+	elif args.scenario == "wheel-hardcoded-route":
+		scenario = Scenario(
+			scenario_name=args.scenario,
+			snapshot_filename=WHEEL_SNAPSHOT_FILENAME,
+			honest_senders=["Alice", "Charlie"],
+			honest_receivers=["Bob", "Dave"],
+			target_node_pairs=[("Alice", "Hub"), ("Hub", "Bob"), ("Charlie", "Hub"), ("Hub", "Dave")],
+			jammer_sends_to_nodes=["Alice"],
+			jammer_receives_from_nodes=["Dave"],
+			honest_must_route_via_nodes=["Hub"],
+			jammer_must_route_via_nodes=["Alice", "Hub", "Bob", "Charlie", "Hub", "Dave"])
+	elif args.scenario == "wheel":
+		scenario = Scenario(
+			scenario_name=args.scenario,
+			snapshot_filename=WHEEL_SNAPSHOT_FILENAME,
+			honest_senders=["Alice", "Charlie"],
+			honest_receivers=["Bob", "Dave"],
+			target_node="Hub",
+			honest_must_route_via_nodes=["Hub"])
 	elif args.scenario == "real":
-		#big_node = "02ad6fb8d693dc1e4569bcedefadf5f72a931ae027dc0f0c544b34c1c6f3b9a02b"
+		#big_node = "030c3f19d742ca294a55c00376b3b355c3c90d61c6b6b39554dbc7ac19b141c14f"
+		#medium_node = "02ad6fb8d693dc1e4569bcedefadf5f72a931ae027dc0f0c544b34c1c6f3b9a02b"
 		small_node = "0263a6d2f0fed7b1e14d01a0c6a6a1c0fae6e0907c0ac415574091e7839a00405b"
 		target_node = small_node
 		scenario = Scenario(
 			scenario_name=args.scenario,
 			snapshot_filename=REAL_SNAPSHOT_FILENAME,
 			target_node=target_node,
+			num_target_node_pairs=args.num_target_node_pairs,
 			honest_must_route_via_nodes=[target_node])
-		scenario.run(
+
+	# Actually run the simulations
+	if args.scenario == "real":
+		target_channel_capacity_range = [None]
+	else:
+		M = 1000 * 1000
+		target_channel_capacity_range = [int(n * M) for n in [0.1, 0.2, 0.5, 1, 2, 5, 10]]
+	# doesn't matter for ABCD, runs fast enough for real graph (??)
+	max_route_length = 6
+	max_target_node_pairs_per_route = 3
+	honest_payments_per_second = 1
+	upfront_base_coeff_range = [n / 10000 for n in range(200 + 1)]
+	breakeven_upfront_coeffs = []
+	scenario_num, total_num_scenarios = 0, len(target_channel_capacity_range) * len(upfront_base_coeff_range)
+	logger.info(f"Target capacities: {target_channel_capacity_range}")
+	logger.info(f"Upfront base coeff range: {upfront_base_coeff_range}")
+	logger.info(f"Total scenarios: {total_num_scenarios}")
+	#exit()
+	for target_channel_capacity in target_channel_capacity_range:
+		scenario_num += 1
+		percent_done = round(100 * scenario_num / total_num_scenarios)
+		logger.info(f"Simulating scenario {scenario_num} / {total_num_scenarios} ({percent_done} % done)")
+		logger.info(f"Target channel capacity: {target_channel_capacity}, honest payments per second: {honest_payments_per_second}")
+		breakeven_upfront_base_coeff, _ = scenario.run(
 			duration=args.duration,
 			num_jamming_batches=args.num_jamming_batches,
-			upfront_base_coeff_range=args.upfront_base_coeff_range,
+			upfront_base_coeff_range=upfront_base_coeff_range,
 			upfront_rate_coeff_range=args.upfront_rate_coeff_range,
 			max_num_attempts_per_route_honest=args.max_num_attempts_honest,
 			max_num_attempts_per_route_jamming=args.max_num_attempts_jamming,
 			max_num_routes_honest=args.max_num_routes_honest,
 			num_runs_per_simulation=args.num_runs_per_simulation,
-			max_target_hops_per_route=4,
-			max_route_length=6,
-			compact_output=True,
+			max_target_node_pairs_per_route=max_target_node_pairs_per_route,
+			max_route_length=max_route_length,
+			honest_payments_per_second=honest_payments_per_second,
+			target_channel_capacity=target_channel_capacity,
+			compact_output=(args.scenario == "real"),
 			extrapolate_jamming_revenues=args.extrapolate_jamming_revenues)
-	else:
-		logger.error(f"Not yet properly implemented for scenario {args.scenario}!")
-		exit()
+		breakeven_upfront_coeffs.append((target_channel_capacity, breakeven_upfront_base_coeff))
+		#scenario.results_to_json_file(start_timestamp + scenario_num)
+		#scenario.results_to_csv_file(start_timestamp + scenario_num)
 
 	end_timestamp = int(time())
 	running_time = end_timestamp - start_timestamp
-	scenario.results_to_json_file(start_timestamp)
-	scenario.results_to_csv_file(start_timestamp)
+	logger.info(f"Breakeven upfront base coeffs: {breakeven_upfront_coeffs}")
+	with open("results/" + str(start_timestamp + scenario_num + 1) + "-breakeven" + ".csv", "w", newline="") as f:
+		writer = csv.writer(f, delimiter=",", quotechar="'", quoting=csv.QUOTE_MINIMAL)
+		writer.writerow(["target_channel_capacity", "breakeven_upfront_base_coeff"])
+		writer.writerows(breakeven_upfront_coeffs)
+		writer.writerow("")
+		writer.writerow(["honest_payments_per_second", honest_payments_per_second])
+		writer.writerow(["duration", args.duration])
 	logger.info(f"Running time (min): {round(running_time / 60, 1)}")
 
 
@@ -243,7 +283,7 @@ def initialize_logging(start_timestamp, log_level):
 	#logging.basicConfig(filename=LOG_FILENAME, filemode="w", level=logging.DEBUG)
 	root_logger = logging.getLogger()
 	root_logger.setLevel(log_level)
-	format_string = "[%(levelname)s] %(name)s: %(message)s"
+	format_string = "%(asctime)s: [%(levelname)s] %(name)s: %(message)s"
 	# Console output
 	root_logger.handler = logging.StreamHandler(sys.stdout)
 	formatter = logging.Formatter(format_string)

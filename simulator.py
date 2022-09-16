@@ -1,6 +1,7 @@
 from statistics import mean
 from copy import deepcopy
 from functools import partial
+from collections import defaultdict
 
 from direction import Direction
 from channelindirection import ErrorType, FeeType, ChannelInDirection
@@ -30,7 +31,7 @@ class Simulator:
 			- ln_model
 				An instance of LNModel to run the simulations with.
 
-			- target_hops
+			- target_node_pairs
 				What the attacker wants to jam.
 
 			- target_node
@@ -46,7 +47,7 @@ class Simulator:
 				The maximal number of different routes to try before an honest payment reaches the receiver.
 
 			- max_num_routes_jamming
-				The maximal number of different routes to try before all target hops are fully jammed.
+				The maximal number of different routes to try before all target node pairs are fully jammed.
 
 			- num_runs_per_simulation
 				The number of runs per simulation to average the results across.
@@ -58,8 +59,8 @@ class Simulator:
 			- jammer_must_route_via_nodes
 				Override the router logic in favor of a hard-coded route.
 
-			- max_target_hops_per_route
-				Max desired number of target hops in a jammer's route.
+			- max_target_node_pairs_per_route
+				Max desired number of target node pairs in a jammer's route.
 
 			- max_route_length
 				Max number of hops per route.
@@ -90,7 +91,7 @@ class Simulator:
 			for upfront_rate_coeff in upfront_rate_coeff_range:
 				simulation_num += 1
 				percent_done = round(100 * simulation_num / total_num_simulations)
-				logger.info(f"Starting simulation {simulation_num} / {total_num_simulations} ({percent_done} % done) with coeffs: base {upfront_base_coeff}, rate {upfront_rate_coeff}")
+				logger.debug(f"Starting simulation {simulation_num} / {total_num_simulations} ({percent_done} % done) with coeffs: base {upfront_base_coeff}, rate {upfront_rate_coeff}")
 				self.ln_model.set_upfront_fee_from_coeff_for_all(upfront_base_coeff, upfront_rate_coeff)
 				stats, revenues = self.run_simulation(schedule_generation_function, duration, num_runs_per_simulation, normalize_results_for_duration)
 				result = {
@@ -107,7 +108,7 @@ class Simulator:
 			Run a simulation self.num_runs_per_simulation times and average results.
 		'''
 		tmp_num_sent, tmp_num_failed, tmp_num_reached_receiver, tmp_num_hit_target_node = [], [], [], []
-		tmp_revenues = {node: [] for node in self.ln_model.channel_graph.nodes}
+		tmp_revenues = defaultdict(list)
 		for i in range(num_runs_per_simulation):
 			logger.debug(f"Simulation {i + 1} of {num_runs_per_simulation}")
 			# we can't generate schedules out of cycle because they get depleted during execution
@@ -125,7 +126,7 @@ class Simulator:
 			tmp_num_failed.append(normalized(num_failed))
 			tmp_num_reached_receiver.append(normalized(num_reached_receiver))
 			tmp_num_hit_target_node.append(normalized(num_hit_target_node))
-			for node in self.ln_model.channel_graph.nodes:
+			for node in self.nodes_hit:
 				tmp_revenues[node].append(normalized(
 					self.ln_model.get_revenue(node, FeeType.UPFRONT)
 					+ self.ln_model.get_revenue(node, FeeType.SUCCESS)))
@@ -136,8 +137,9 @@ class Simulator:
 			"num_reached_receiver": mean(tmp_num_reached_receiver),
 			"num_hit_target_node": mean(tmp_num_hit_target_node)
 		}
-		revenues = {}
-		for node in self.ln_model.channel_graph.nodes:
+		revenues = dict.fromkeys(self.ln_model.hop_graph.nodes, 0)
+		#logger.debug(f"Hit nodes: {self.nodes_hit}")
+		for node in self.nodes_hit:
 			revenues[node] = mean(tmp_revenues[node])
 		return stats, revenues
 
@@ -148,6 +150,7 @@ class Simulator:
 		self.num_sent_total, self.num_failed_total, self.num_reached_receiver_total = 0, 0, 0
 		self.num_hit_target_node = 0
 		self.routes_by_length = dict.fromkeys(range(self.max_route_length), 0)
+		self.nodes_hit = set()
 
 	def handle_event(self, event):
 		raise NotImplementedError("handle_event must be implemented in a Simulator sub-class (such as HonestSimulator or JammingSimulator)")
@@ -159,7 +162,6 @@ class Simulator:
 			new_time, event = self.schedule.get_event()
 			if new_time > self.now:
 				logger.debug(f"Current time: {new_time}")
-				pass
 			if new_time > self.schedule.end_time:
 				break
 			self.now = new_time
@@ -185,9 +187,7 @@ class Simulator:
 			# TODO: implement proper logic like: if the cheapest channel is jammed, choose another one
 			# also note: this check is time-independent: we can check capacity and enabled status without time
 			# only jamming status check is time-sensitive, but this is unavailable for us here
-			chosen_ch = self.ln_model.get_hop(u_node, d_node).get_cheapest_channel_maybe_can_forward(
-				Direction(u_node, d_node),
-				amount)
+			chosen_ch = self.ln_model.get_hop(u_node, d_node).get_cheapest_channel_maybe_can_forward(Direction(u_node, d_node), amount)
 			chosen_cid = chosen_ch.get_cid()
 			logger.debug(f"Suggested cheapest cid: {chosen_cid}")
 			hop = self.ln_model.get_hop(u_node, d_node)
@@ -214,20 +214,20 @@ class JammingSimulator(Simulator):
 		max_num_routes,
 		max_num_attempts_per_route,
 		num_runs_per_simulation,
-		target_hops,
+		target_node_pairs,
 		target_node=None,
 		max_route_length=ProtocolParams["MAX_ROUTE_LENGTH"],
-		max_target_hops_per_route=None,
+		max_target_node_pairs_per_route=None,
 		jammer_must_route_via_nodes=[]):
-		self.target_hops = target_hops
+		self.target_node_pairs = target_node_pairs
 		self.target_node = target_node
-		self.max_target_hops_per_route = max_target_hops_per_route if max_target_hops_per_route is not None else max_route_length - 2
+		self.max_target_node_pairs_per_route = max_target_node_pairs_per_route if max_target_node_pairs_per_route is not None else max_route_length - 2
 		self.jammer_must_route_via_nodes = jammer_must_route_via_nodes
 		# we may not finish jamming a hop due to roll-back of the last looped jam
 		# we can have at most as many unjammed slots as hops in the whole route
 		# if needed, we jam it separately with no-repeated-hops-allowed route
-		max_default_routes_per_target_hop = 1 + ProtocolParams["MAX_ROUTE_LENGTH"]
-		max_num_routes = len(self.target_hops) * max_default_routes_per_target_hop if max_num_routes is None else max_num_routes
+		#max_default_routes_per_target_node_pair = 1 + ProtocolParams["MAX_ROUTE_LENGTH"]
+		#max_num_routes = len(self.target_node_pairs) * max_default_routes_per_target_node_pair if max_num_routes is None else max_num_routes
 		Simulator.__init__(self, ln_model, max_num_routes, max_num_attempts_per_route, max_route_length, num_runs_per_simulation)
 
 	def run_simulation_series_without_extrapolation(
@@ -252,7 +252,7 @@ class JammingSimulator(Simulator):
 			for upfront_rate_coeff in upfront_rate_coeff_range:
 				simulation_num += 1
 				percent_done = round(100 * simulation_num / total_num_simulations)
-				logger.info(f"Starting simulation {simulation_num} / {total_num_simulations} ({percent_done} % done) with coeffs: base {upfront_base_coeff}, rate {upfront_rate_coeff}")
+				logger.debug(f"Starting simulation {simulation_num} / {total_num_simulations} ({percent_done} % done) with coeffs: base {upfront_base_coeff}, rate {upfront_rate_coeff}")
 				self.ln_model.set_upfront_fee_from_coeff_for_all(upfront_base_coeff, upfront_rate_coeff)
 				stats, revenues = self.run_simulation(schedule_generation_function, duration, num_runs_per_simulation, normalize_results_for_duration)
 				result = {
@@ -278,8 +278,7 @@ class JammingSimulator(Simulator):
 			For all other upfront fee coefficients, revenues are re-scaled without running routing.
 			Limitations and assumptions:
 			- this only works for jams (i.e., no success-case fees are paid ever)
-			- upfront rate is zero
-			- there is _some_ non-zero element in upfront base coefficients list
+			- there is _some_ non-zero element in upfront base or upfront rate coefficients list
 		'''
 		simulation_series_results = []
 		if num_runs_per_simulation is None:
@@ -290,7 +289,7 @@ class JammingSimulator(Simulator):
 		# we run the simulation just once, and scale the resulting revenue w.r.t base fees
 		some_base_coeff = non_zero_upfront_base_coeff[0] if non_zero_upfront_base_coeff else 0
 		some_rate_coeff = non_zero_upfront_rate_coeff[0] if non_zero_upfront_rate_coeff else 0
-		logger.info(f"Running one jamming simulation for extrapolation with upfront base / rate coeffs: {some_base_coeff}, {some_rate_coeff}")
+		logger.debug(f"Running one jamming simulation for extrapolation with upfront base / rate coeffs: {some_base_coeff}, {some_rate_coeff}")
 		self.ln_model.set_upfront_fee_from_coeff_for_all(
 			upfront_base_coeff=some_base_coeff, upfront_rate_coeff=some_rate_coeff)
 		stats_some_coeff, revenues_some_coeff = self.run_simulation(schedule_generation_function, duration, num_runs_per_simulation, normalize_results_for_duration)
@@ -346,11 +345,11 @@ class JammingSimulator(Simulator):
 		return simulation_series_results
 
 	def handle_event(self, event):
-		logger.debug(f"Start handling jam batch at time {self.now}")
+		logger.debug(f"Launching jam batch at time {self.now}")
 		if self.jammer_must_route_via_nodes:
-			self.handle_jam_with_static_route(event)
+			self.send_jam_with_static_route(event)
 		else:
-			self.handle_jam_with_router(event)
+			self.send_jam_with_router(event)
 		next_batch_time = self.now + event.processing_delay
 		if next_batch_time > self.schedule.end_time:
 			logger.debug(f"Schedule time exceeded")
@@ -359,7 +358,7 @@ class JammingSimulator(Simulator):
 			logger.debug(f"Pushing jam {event} into schedule for time {next_batch_time}")
 			self.schedule.put_event(next_batch_time, event)
 
-	def handle_jam_with_static_route(self, event):
+	def send_jam_with_static_route(self, event):
 		rg = self.ln_model.routing_graph
 		must_nodes = self.jammer_must_route_via_nodes
 		assert(rg.has_edge("JammerSender", must_nodes[0]))
@@ -376,40 +375,38 @@ class JammingSimulator(Simulator):
 		self.num_failed_total += num_failed
 		self.num_reached_receiver_total += num_reached_receiver
 		self.num_hit_target_node += num_hit_target_node
+		self.nodes_hit.update(route)
 		logger.debug(f"Jammed hop {jammed_hop}")
 
-	def all_target_hops_are_really_jammed(self):
-		return all(self.ln_model.get_hop(*hop).cannot_forward(Direction(*hop), self.now) for hop in self.target_hops)
+	def all_target_node_pairs_are_really_jammed(self):
+		return all(self.ln_model.get_hop(*hop).cannot_forward(Direction(*hop), self.now) for hop in self.target_node_pairs)
 
 	def get_jammed_status_of_hops(self, hops):
-		return [
-			(
-				Router.shorten_ids(hop),
-				self.ln_model.get_hop(*hop).cannot_forward(Direction(*hop), self.now),
-				self.ln_model.get_hop(*hop).get_total_num_slots_occupied_in_direction(Direction.Alph)
-			) for hop in hops]
+		return [(
+			Router.shorten_ids(hop),
+			self.ln_model.get_hop(*hop).cannot_forward(Direction(*hop), self.now),
+			self.ln_model.get_hop(*hop).get_total_num_slots_occupied_in_direction(Direction.Alph)
+		) for hop in hops]
 
-	def handle_jam_with_router(self, event):
-		max_num_routes = self.max_num_routes
-		target_hops_unjammed = self.target_hops.copy()
-		router = Router(
-			self.ln_model,
-			event.amount,
-			event.sender,
-			event.receiver,
-			self.max_target_hops_per_route,
-			self.max_route_length)
-		router.update_route_generator(target_hops_unjammed)
-		for num_route in range(max_num_routes):
-			logger.debug(f"Trying jamming route {num_route + 1} of max {max_num_routes}")
-			logger.debug(f"At least {len(target_hops_unjammed)} / {len(self.target_hops)} target hops still unjammed")
-			if not target_hops_unjammed:
-				logger.debug(f"No unjammed target hops left, no need to try further routes")
+	def send_jam_with_router(self, event):
+		#max_num_routes = self.max_num_routes
+		target_node_pairs_unjammed = self.target_node_pairs.copy()
+		router = Router(self.ln_model, event.amount, event.sender, event.receiver, self.max_target_node_pairs_per_route, self.max_route_length)
+		router.update_route_generator(target_node_pairs_unjammed)
+		num_route = 0
+		while not self.all_target_node_pairs_are_really_jammed():
+			num_route += 1
+			logger.debug(f"Trying jamming route {num_route + 1} of max {self.max_num_routes}")
+			logger.debug(f"At least {len(target_node_pairs_unjammed)} / {len(self.target_node_pairs)} target node pairs still unjammed")
+			#logger.info(f"Trying to include up to {self.max_target_node_pairs_per_route} target node pairs in route of length {self.max_route_length}")
+			if not target_node_pairs_unjammed:
+				logger.debug(f"No unjammed target node pairs left, no need to try further routes")
 				break
 			try:
 				route = router.get_route()
+				logger.debug(f"Suggested route of length {len(route)}")
 			except StopIteration:
-				logger.warning(f"No route from {event.sender} to {event.receiver} via any of {target_hops_unjammed}")
+				logger.warning(f"No route from {event.sender} to {event.receiver} via any of {target_node_pairs_unjammed}")
 				break
 			#logger.debug(f"Found route of length {len(route)}")
 			num_sent, num_failed, num_reached_receiver, last_node_reached, first_node_not_reached, num_hit_target_node = self.send_jam_via_route(event, route)
@@ -422,7 +419,7 @@ class JammingSimulator(Simulator):
 				logger.debug(f"Jammed hop {jammed_hop}")
 				if "JammerSender" in jammed_hop or "JammerReceiver" in jammed_hop:
 					logger.warning(f"Jammer's node is in a jammed hop {jammed_hop}. Assign more slots to the jammer!")
-				assert(jammed_hop in target_hops_unjammed or jammed_hop not in self.target_hops)
+				assert(jammed_hop in target_node_pairs_unjammed or jammed_hop not in self.target_node_pairs)
 				# Only if the newly jammed hop occurs in the route exactly once, can we be sure it's really jammed!
 				# Otherwise, if the hop became jammed on a non-first occurrence in the route,
 				# some slots would be freed up when the jam rolls back.
@@ -431,31 +428,32 @@ class JammingSimulator(Simulator):
 				if Router.num_hop_occurs_in_path(jammed_hop, route) == 1:
 					logger.debug(f"Removing {jammed_hop} from router (occurs only once in path)")
 					router.remove_hop(jammed_hop)
-					if jammed_hop in target_hops_unjammed:
-						logger.debug(f"Removing {jammed_hop} from unjammed hops {target_hops_unjammed}")
-						target_hops_unjammed.remove(jammed_hop)
-						router.update_route_generator(target_hops_unjammed)
+					if jammed_hop in target_node_pairs_unjammed:
+						logger.debug(f"Removing {jammed_hop} from unjammed hops {target_node_pairs_unjammed}")
+						target_node_pairs_unjammed.remove(jammed_hop)
+						router.update_route_generator(target_node_pairs_unjammed)
 				else:
 					logger.debug(f"Hop {jammed_hop} may not be fully jammed!")
 					logger.debug(f"Jammed hop {jammed_hop} occurs {Router.num_hop_occurs_in_path(jammed_hop, route)} times in route {route}")
 			else:
 				logger.debug(f"All jams reached receiver for route {route}")
 				#logger.debug(f"Allow for more attempts per route (now at {self.max_num_attempts_per_route})!")
-				target_hops_unjammed_in_this_route = [hop for hop in Router.get_hops(route) if (
-					hop in self.target_hops
+				target_node_pairs_unjammed_in_this_route = [hop for hop in Router.get_hops(route) if (
+					hop in self.target_node_pairs
 					and self.ln_model.get_hop(*hop).can_forward(Direction(*hop), self.now)
 				)]
-				logger.debug(f"Target hops unjammed in this route: {self.get_jammed_status_of_hops(target_hops_unjammed_in_this_route)}")
-			logger.debug(f"All target hops jammed status: {self.get_jammed_status_of_hops(self.target_hops)}")
-		if not self.all_target_hops_are_really_jammed():
-			target_hops_left_unjammed = [hop for hop in self.target_hops if (
+				logger.debug(f"Target hops unjammed in this route: {self.get_jammed_status_of_hops(target_node_pairs_unjammed_in_this_route)}")
+			logger.debug(f"All target node pairs jammed status: {self.get_jammed_status_of_hops(self.target_node_pairs)}")
+		if not self.all_target_node_pairs_are_really_jammed():
+			target_node_pairs_left_unjammed = [hop for hop in self.target_node_pairs if (
 				self.ln_model.get_hop(*hop).can_forward(Direction(*hop), self.now)
 			)]
 			# sic! num_routes, not (num_routes + 1): though we start at zero, we count the last interation which breaks before producing a route
-			logger.warning(f"Couldn't jam {len(target_hops_left_unjammed)} target hops after {num_route} routes at time {self.now}.")
-			logger.warning(f"Unjammed target hops: {self.get_jammed_status_of_hops(target_hops_left_unjammed)}")
+			logger.warning(f"Couldn't jam {len(target_node_pairs_left_unjammed)} target node pairs after {num_route} routes at time {self.now}.")
+			logger.warning(f"Unjammed target node pairs: {self.get_jammed_status_of_hops(target_node_pairs_left_unjammed)}")
+			#exit()
 		else:
-			logger.debug(f"All target hops are jammed at time {self.now}")
+			logger.debug(f"All target node pairs are jammed at time {self.now}")
 
 	def send_jam_via_route(self, event, route):
 		assert(event.desired_result is False)
@@ -485,6 +483,7 @@ class JammingSimulator(Simulator):
 				elif error_type == ErrorType.NO_SLOTS:
 					logger.debug(f"Route {route} jammed at time {self.now}")
 					break
+		self.nodes_hit.update(route)
 		return num_sent, num_failed, num_reached_receiver, last_node_reached, first_node_not_reached, num_hit_target_node
 
 
@@ -502,9 +501,9 @@ class HonestSimulator(Simulator):
 		Simulator.__init__(self, ln_model, max_num_routes, max_num_attempts_per_route, max_route_length, num_runs_per_simulation)
 
 	def handle_event(self, event):
-		return self.handle_honest_payment(event)
+		return self.send_honest_payment(event)
 
-	def handle_honest_payment(self, event):
+	def send_honest_payment(self, event):
 		if event.must_route_via_nodes:
 			must_nodes = [event.sender] + event.must_route_via_nodes + [event.receiver]
 			route = self.get_shortest_route_via_nodes(must_nodes, event.amount)
@@ -580,6 +579,7 @@ class HonestSimulator(Simulator):
 			elif error_type is not None:
 				logger.debug(f"Payment failed at {last_node_reached}-{first_node_not_reached} with {error_type} at attempt {attempt_num}")
 				num_failed += 1
+		self.nodes_hit.update(route)
 		return num_sent, num_failed, num_reached_receiver
 
 	@staticmethod

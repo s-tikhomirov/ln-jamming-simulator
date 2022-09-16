@@ -29,7 +29,7 @@ def get_example_j_sim():
 	ln_model = get_example_ln_model()
 	sim = JammingSimulator(
 		ln_model,
-		target_hops=[("Mary", "Charlie")],
+		target_node_pairs=[("Mary", "Charlie")],
 		max_num_routes=1,
 		max_num_attempts_per_route=500,
 		num_runs_per_simulation=1)
@@ -68,7 +68,7 @@ def test_no_routes():
 def test_not_enough_attempts():
 	sim = JammingSimulator(
 		get_example_ln_model(),
-		target_hops=[("Mary", "Charlie")],
+		target_node_pairs=[("Mary", "Charlie")],
 		max_num_attempts_per_route=1,
 		max_num_routes=1,
 		num_runs_per_simulation=1)
@@ -84,7 +84,7 @@ def test_jammer_jammed():
 	ln_model.add_jammers_channels(send_to_nodes=["Alice"], num_slots=1)
 	sim = JammingSimulator(
 		ln_model,
-		target_hops=[("Charlie", "Dave")],
+		target_node_pairs=[("Charlie", "Dave")],
 		max_num_attempts_per_route=500,
 		max_num_routes=1,
 		num_runs_per_simulation=1)
@@ -227,7 +227,7 @@ def test_simulator_jamming():
 	# FIXME: set jammer's channels properly
 	sim = JammingSimulator(
 		get_example_ln_model(),
-		target_hops=[("Mary", "Charlie")],
+		target_node_pairs=[("Mary", "Charlie")],
 		max_num_attempts_per_route=500,
 		max_num_routes=1,
 		num_runs_per_simulation=1)
@@ -334,7 +334,7 @@ def test_error_response_honest():
 def test_error_response_jamming():
 	sim = JammingSimulator(
 		get_example_ln_model(),
-		target_hops=[("Mary", "Charlie")],
+		target_node_pairs=[("Mary", "Charlie")],
 		max_num_attempts_per_route=500,
 		max_num_routes=1,
 		num_runs_per_simulation=1)

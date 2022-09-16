@@ -9,32 +9,32 @@ logger = logging.getLogger(__name__)
 
 class Router:
 
-	def __init__(self, ln_model, amount, sender, receiver, max_target_hops_per_route=None, max_route_length=None):
+	def __init__(self, ln_model, amount, sender, receiver, max_target_node_pairs_per_route=None, max_route_length=None):
 		self.ln_model = ln_model
 		self.g = nx.MultiDiGraph(ln_model.get_routing_graph_for_amount(amount))
 		self.sender = sender
 		self.receiver = receiver
 		self.max_route_length = ProtocolParams["MAX_ROUTE_LENGTH"] if max_route_length is None else max_route_length
 		max_route_length_minus_two = self.max_route_length - 2
-		self.max_target_hops_per_route = max_route_length_minus_two if max_target_hops_per_route is None else max(1, min(max_target_hops_per_route, self.max_route_length - 2))
-		assert(self.max_target_hops_per_route > 0)
-		self.update_route_generator(target_hops=[], allow_repeated_hops=True)
+		self.max_target_node_pairs_per_route = max_route_length_minus_two if max_target_node_pairs_per_route is None else max(1, min(max_target_node_pairs_per_route, self.max_route_length - 2))
+		assert(self.max_target_node_pairs_per_route > 0)
+		self.update_route_generator(target_node_pairs=[], allow_repeated_hops=True)
 
-	def update_route_generator(self, target_hops, max_route_length=None, allow_repeated_hops=True):
-		self.target_hops = target_hops
-		if target_hops:
-			self.max_target_hops_per_route = min(self.max_target_hops_per_route, len(self.target_hops))
+	def update_route_generator(self, target_node_pairs, max_route_length=None, allow_repeated_hops=True):
+		self.target_node_pairs = target_node_pairs
+		if target_node_pairs:
+			self.max_target_node_pairs_per_route = min(self.max_target_node_pairs_per_route, len(self.target_node_pairs))
 		if max_route_length is not None:
 			self.max_route_length = max_route_length
-			self.max_target_hops_per_route = min(self.max_target_hops_per_route, self.max_route_length)
+			self.max_target_node_pairs_per_route = min(self.max_target_node_pairs_per_route, self.max_route_length)
 		self.allow_repeated_hops = allow_repeated_hops
 		self.pre_calculate_paths(self.sender, self.receiver)
-		self.routes = self.get_routes_via_target_hops()
+		self.routes = self.get_routes_via_target_node_pairs()
 
 	def pre_calculate_paths(self, sender, receiver):
 		self.paths_from_sender = nx.shortest_path(self.g, source=sender)
 		self.paths_to_receiver = nx.shortest_path(self.g, target=receiver)
-		for hop in self.target_hops:
+		for hop in self.target_node_pairs:
 			if not nx.has_path(self.g, self.sender, hop[0]):
 				self.paths_from_sender[hop[0]] = None
 			if not nx.has_path(self.g, hop[1], self.receiver):
@@ -46,14 +46,14 @@ class Router:
 	def remove_hop(self, hop):
 		self.g.remove_edge(hop[0], hop[1])
 
-	def get_routes_via_target_hops(self, min_target_hops_per_route=1):
+	def get_routes_via_target_node_pairs(self, min_target_node_pairs_per_route=1):
 		found_routes = set()
-		target_hops_per_route = self.max_target_hops_per_route
-		while target_hops_per_route >= min_target_hops_per_route:
-			#logger.debug(f"Looking for routes with {target_hops_per_route} target hops")
-			for target_hops_subset in itertools.combinations(self.target_hops, target_hops_per_route):
-				#logger.debug(f"Generating routes via permutation of length {len(target_hops_subset)}...")
-				for hops_permutation in itertools.permutations(target_hops_subset):
+		target_node_pairs_per_route = self.max_target_node_pairs_per_route
+		while target_node_pairs_per_route >= min_target_node_pairs_per_route:
+			#logger.debug(f"Looking for routes with {target_node_pairs_per_route} target node pairs")
+			for target_node_pairs_subset in itertools.combinations(self.target_node_pairs, target_node_pairs_per_route):
+				#logger.debug(f"Generating routes via permutation of length {len(target_node_pairs_subset)}...")
+				for hops_permutation in itertools.permutations(target_node_pairs_subset):
 					#logger.debug(f"Considering permutation {hops_permutation}")
 					route = self.get_shortest_route_via_hops(hops_permutation)
 					if route is not None:
@@ -64,7 +64,7 @@ class Router:
 						else:
 							found_routes.add(route)
 							yield route
-			target_hops_per_route -= 1
+			target_node_pairs_per_route -= 1
 
 	def is_suitable(self, route):
 		if len(route) > self.max_route_length:
@@ -80,7 +80,7 @@ class Router:
 		#logger.debug(f"Searching for route from {self.sender} to {self.receiver} via {hops_permutation}")
 		prev_d_node = None
 		for i, (u_node, d_node) in enumerate(hops_permutation):
-			assert(self.g.has_edge(u_node, d_node))
+			assert self.g.has_edge(u_node, d_node), (u_node, d_node)
 			if prev_d_node is None:
 				first_hop_first_node = hops_permutation[0][0]
 				if self.paths_from_sender[first_hop_first_node] is None:

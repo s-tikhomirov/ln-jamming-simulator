@@ -1,6 +1,7 @@
 import json
 import csv
 from numpy.random import exponential
+from random import sample
 
 from params import FeeParams, ProtocolParams, PaymentFlowParams
 from lnmodel import LNModel
@@ -26,7 +27,8 @@ class Scenario:
 		honest_senders=None,
 		honest_receivers=None,
 		target_node=None,
-		target_hops=None,
+		target_node_pairs=None,
+		num_target_node_pairs=None,
 		jammer_sends_to_nodes=None,
 		jammer_receives_from_nodes=None,
 		honest_must_route_via_nodes=[],
@@ -74,15 +76,16 @@ class Scenario:
 		self.honest_senders = honest_senders
 		self.honest_receivers = honest_receivers
 		self.target_node = target_node
-		self.target_hops = self.get_target_hops(target_node, target_hops)
+		self.target_node_pairs = self.get_target_node_pairs(target_node, target_node_pairs, num_target_node_pairs)
+		logger.info(f"{len(self.target_node_pairs)} target node pairs selected")
 
 		assert (jammer_sends_to_nodes is None) == (jammer_receives_from_nodes is None)
 		jammer_opens_channels_to_all_targets = jammer_sends_to_nodes is None
-		jammer_num_slots = len(self.target_hops) * (default_num_slots_per_channel_in_direction + 1)
+		jammer_num_slots = len(self.target_node_pairs) * (default_num_slots_per_channel_in_direction + 1)
 		if jammer_opens_channels_to_all_targets:
-			logger.info(f"Jammer opens channels to and from all target hops")
-			jammer_sends_to = [hop[0] for hop in self.target_hops]
-			jammer_receives_from = [hop[1] for hop in self.target_hops]
+			logger.info(f"Jammer opens channels to and from all target node pairs")
+			jammer_sends_to = [hop[0] for hop in self.target_node_pairs]
+			jammer_receives_from = [hop[1] for hop in self.target_node_pairs]
 		else:
 			logger.info(f"Jammer opens channels to {jammer_sends_to_nodes} and from {jammer_receives_from_nodes}")
 			jammer_sends_to = jammer_sends_to_nodes
@@ -96,21 +99,33 @@ class Scenario:
 		if self.set_default_success_fee:
 			self.ln_model.set_fee_for_all(FeeType.SUCCESS, default_success_base_fee, default_success_fee_rate)
 
-	def get_target_hops(self, target_node=None, target_hops=None):
-		if target_hops is not None:
-			# TODO: assert all target hops are in graph
-			target_hops = target_hops
+	def get_target_node_pairs(self, target_node=None, target_node_pairs=None, num_target_node_pairs=None):
+		if target_node_pairs is not None:
+			# TODO: assert all target node pairs are in graph
+			target_node_pairs = target_node_pairs
 		elif target_node is not None:
-			in_edges = list(self.ln_model.routing_graph.in_edges(target_node, data=False))
-			out_edges = list(self.ln_model.routing_graph.out_edges(target_node, data=False))
-			#target_hops = in_edges[:5] + out_edges[:5]
-			target_hops = in_edges + out_edges
+			# note: we choose target node pairs, not hops
+			# a bi-directional hop represents two node pairs (A, B) and (B, A)
+			# we first extract all such pairs, then select from them
+			rg = self.ln_model.routing_graph
+			in_edges = list(rg.in_edges(target_node, data=False))
+			out_edges = list(rg.out_edges(target_node, data=False))
+			all_adjacent_edges = in_edges + out_edges
+			logger.info(f"There are {len(all_adjacent_edges)} edges adjacent to target node {self.target_node}")
+			if num_target_node_pairs is None:
+				target_node_pairs = all_adjacent_edges
+			else:
+				if len(all_adjacent_edges) < num_target_node_pairs:
+					logger.critical(f"Requested {num_target_node_pairs} adjacent to a node with only {len(all_adjacent_edges)} adjacent channels!")
+					exit()
+				else:
+					target_node_pairs = sample(all_adjacent_edges, num_target_node_pairs)
 		else:
-			logger.critical(f"Neither target hops nor target nodes are specified!")
+			logger.critical(f"Neither target node pairs nor target nodes are specified!")
 			exit()
-		logger.info(f"Set {len(target_hops)} target hops")
-		logger.debug(f":{target_hops}")
-		return target_hops
+		logger.info(f"Set {len(target_node_pairs)} target node pairs")
+		logger.debug(f":{target_node_pairs}")
+		return target_node_pairs
 
 	def run(
 		self,
@@ -121,19 +136,31 @@ class Scenario:
 		max_num_attempts_per_route_jamming,
 		max_num_routes_honest,
 		num_runs_per_simulation,
-		max_target_hops_per_route,
-		max_route_length,
-		honest_payment_every_seconds=PaymentFlowParams["HONEST_PAYMENT_EVERY_SECONDS"],
+		max_target_node_pairs_per_route=None,
+		max_route_length=None,
+		honest_payments_per_second=PaymentFlowParams["HONEST_PAYMENTS_PER_SECOND"],
 		target_channel_capacity=None,
 		num_jamming_batches=None,
 		compact_output=False,
 		normalize_results_for_duration=True,
 		extrapolate_jamming_revenues=False):
 
+		assert max_target_node_pairs_per_route is not None or max_route_length is not None
+		# route length is the number of NODES in the route, which includes two Jammer's channels
+		if max_route_length is None:
+			# ideally, we want to cover all target node pairs
+			# we don't mind if some hops repeat in route, but don't actively seek it
+			# TODO: is this optimal?
+			max_route_length = ProtocolParams["MAX_ROUTE_LENGTH"]
+		if max_target_node_pairs_per_route is None:
+			max_target_node_pairs_per_route = min(len(self.target_node_pairs), max_route_length - 4)
+		#logger.debug(f"Including up to {max_target_node_pairs_per_route} target node pairs in routes of length up to {max_route_length}")
+		assert max_target_node_pairs_per_route <= max_route_length - 3
+
 		if target_channel_capacity is not None:
 			logger.debug(f"Target channel capacity is given: {target_channel_capacity}")
-			assert len(self.target_hops) == 1
-			target_u_node, target_d_node = self.target_hops[0]
+			assert len(self.target_node_pairs) == 1
+			target_u_node, target_d_node = self.target_node_pairs[0]
 			self.ln_model.set_capacity(target_u_node, target_d_node, target_channel_capacity)
 
 		if num_jamming_batches is None:
@@ -148,7 +175,7 @@ class Scenario:
 		if extrapolate_jamming_revenues:
 			logger.info(f"Extrapolating jamming results from one upfront coefficient")
 
-		logger.info(f"Starting jamming simulations with ranges: {upfront_base_coeff_range} {upfront_rate_coeff_range}")
+		logger.debug(f"Starting jamming simulations with ranges: {upfront_base_coeff_range} {upfront_rate_coeff_range}")
 		logger.info(f"Schedule duration: {jamming_schedule_duration}")
 		logger.info(f"Simulation duration: {jamming_simulation_duration}")
 		logger.info(f"Number of jamming batches: {num_jamming_batches}")
@@ -158,9 +185,9 @@ class Scenario:
 			max_num_attempts_per_route=max_num_attempts_per_route_jamming,
 			max_route_length=max_route_length,
 			num_runs_per_simulation=1 if num_jamming_batches is not None else None,
-			target_hops=self.target_hops,
+			target_node_pairs=self.target_node_pairs,
 			target_node=self.target_node,
-			max_target_hops_per_route=max_target_hops_per_route,
+			max_target_node_pairs_per_route=max_target_node_pairs_per_route,
 			jammer_must_route_via_nodes=self.jammer_must_route_via_nodes)
 		results_jamming = j_sim.run_simulation_series(
 			schedule_generation_function=(
@@ -171,7 +198,7 @@ class Scenario:
 			normalize_results_for_duration=normalize_results_for_duration,
 			extrapolate_jamming_revenues=extrapolate_jamming_revenues)
 
-		logger.info(f"Starting honest simulations with ranges: {upfront_base_coeff_range} {upfront_rate_coeff_range}")
+		logger.debug(f"Starting honest simulations with ranges: {upfront_base_coeff_range} {upfront_rate_coeff_range}")
 		h_sim = HonestSimulator(
 			ln_model=self.ln_model,
 			max_num_routes=max_num_routes_honest,
@@ -184,7 +211,7 @@ class Scenario:
 					duration=duration,
 					senders=self.honest_senders,
 					receivers=self.honest_receivers,
-					payment_generation_delay_function=lambda: exponential(honest_payment_every_seconds),
+					payment_generation_delay_function=lambda: exponential(1 / honest_payments_per_second),
 					must_route_via_nodes=self.honest_must_route_via_nodes)),
 			duration=duration,
 			upfront_base_coeff_range=upfront_base_coeff_range,
@@ -200,19 +227,19 @@ class Scenario:
 		if self.target_node is not None:
 			target_nodes = [self.target_node]
 		else:
-			assert len(self.target_hops) == 1
-			target_nodes = list(self.target_hops[0])
+			assert len(self.target_node_pairs) == 1
+			target_nodes = list(self.target_node_pairs[0])
 			logger.debug(f"Choosing ")
 		logger.debug(f"Deciding breakeven based on revenues of target node {target_nodes}")
-		breakeven_stats = Scenario.is_breakeven_reached(results_honest, results_jamming, target_nodes)
+		breakeven_stats = Scenario.get_breakeven_stats(results_honest, results_jamming, target_nodes)
 
 		results = {
 			"params": {
 				"scenario": self.scenario_name,
 				"target_node": self.target_node,
-				"num_target_hops": len(self.target_hops),
+				"num_target_node_pairs": len(self.target_node_pairs),
 				"duration": duration,
-				"honest_payment_every_seconds": honest_payment_every_seconds,
+				"honest_payments_per_second": honest_payments_per_second,
 				"target_channel_capacity": target_channel_capacity,
 				"results_normalized": normalize_results_for_duration,
 				"num_runs_per_simulation": num_runs_per_simulation,
@@ -241,10 +268,17 @@ class Scenario:
 			}
 		}
 		self.results = results
+		return breakeven_stats["breakeven_coeffs"]["base"], breakeven_stats["breakeven_coeffs"]["rate"]
 
 	@staticmethod
 	def is_breakeven_reached(results_honest, results_jamming, target_nodes):
-		breakeven_stats = {}
+		pass
+
+	@staticmethod
+	def get_breakeven_stats(results_honest, results_jamming, target_nodes):
+		breakeven_stats = {"breakeven_coeffs": {"base": None, "rate": None}, "stats": {}}
+		breakeven_first_reached = False
+		breakeven_upfront_base_coeff, breakeven_upfront_rate_coeff = None, None
 		for result_honest in results_honest:
 			upfront_base_coeff = result_honest["upfront_base_coeff"]
 			upfront_rate_coeff = result_honest["upfront_rate_coeff"]
@@ -261,12 +295,18 @@ class Scenario:
 			else:
 				jamming_to_honest_revenue_ratio = revenue_jamming / revenue_honest
 			is_breakeven = jamming_to_honest_revenue_ratio > 1 if jamming_to_honest_revenue_ratio is not None else None
-			if upfront_base_coeff not in breakeven_stats:
-				breakeven_stats[upfront_base_coeff] = {}
-			if upfront_rate_coeff not in breakeven_stats[upfront_base_coeff]:
-				breakeven_stats[upfront_base_coeff][upfront_rate_coeff] = {}
-			breakeven_stats[upfront_base_coeff][upfront_rate_coeff]["is_breakeven"] = is_breakeven
-			breakeven_stats[upfront_base_coeff][upfront_rate_coeff]["jamming_to_honest_revenue_ratio"] = jamming_to_honest_revenue_ratio
+			if not breakeven_first_reached and is_breakeven:
+				breakeven_upfront_base_coeff = upfront_base_coeff
+				breakeven_upfront_rate_coeff = upfront_rate_coeff
+				breakeven_first_reached = True
+			if upfront_base_coeff not in breakeven_stats["stats"]:
+				breakeven_stats["stats"][upfront_base_coeff] = {}
+			if upfront_rate_coeff not in breakeven_stats["stats"][upfront_base_coeff]:
+				breakeven_stats["stats"][upfront_base_coeff][upfront_rate_coeff] = {}
+			breakeven_stats["stats"][upfront_base_coeff][upfront_rate_coeff]["is_breakeven"] = is_breakeven
+			breakeven_stats["stats"][upfront_base_coeff][upfront_rate_coeff]["jamming_to_honest_revenue_ratio"] = jamming_to_honest_revenue_ratio
+		breakeven_stats["breakeven_coeffs"]["base"] = breakeven_upfront_base_coeff
+		breakeven_stats["breakeven_coeffs"]["rate"] = breakeven_upfront_rate_coeff
 		return breakeven_stats
 
 	@staticmethod
@@ -300,18 +340,21 @@ class Scenario:
 			for param_name in self.results["params"]:
 				writer.writerow([param_name, self.results["params"][param_name]])
 			writer.writerow("")
+			writer.writerow(["first_breakeven_upfront_base_coef", self.results["breakeven_stats"]["breakeven_coeffs"]["base"]])
+			writer.writerow(["first_breakeven_upfront_rate_coef", self.results["breakeven_stats"]["breakeven_coeffs"]["rate"]])
+			writer.writerow("")
 			writer.writerow([
 				"upfront_base_coeff",
 				"upfront_rate_coeff",
 				"is_breakeven",
 				"jamming_to_honest_revenue_ratio"])
-			for base in self.results["breakeven_stats"]:
-				for rate in self.results["breakeven_stats"][base]:
+			for base in self.results["breakeven_stats"]["stats"]:
+				for rate in self.results["breakeven_stats"]["stats"][base]:
 					writer.writerow([
 						base,
 						rate,
-						self.results["breakeven_stats"][base][rate]["is_breakeven"],
-						self.results["breakeven_stats"][base][rate]["jamming_to_honest_revenue_ratio"],
+						self.results["breakeven_stats"]["stats"][base][rate]["is_breakeven"],
+						self.results["breakeven_stats"]["stats"][base][rate]["jamming_to_honest_revenue_ratio"],
 					])
 			writer.writerow("")
 			for simulation_type in self.results["simulations"]:

@@ -33,7 +33,7 @@ def example_j_sim():
 	ln_model = get_example_ln_model()
 	sim = JammingSimulator(
 		ln_model,
-		target_hops=[("Mary", "Charlie")],
+		target_node_pairs=[("Mary", "Charlie")],
 		max_num_attempts_per_route=500,
 		max_num_routes=1,
 		num_runs_per_simulation=1)
@@ -54,13 +54,13 @@ def example_h_sim():
 
 def test_simulator_jamming_schedule(example_j_sim):
 	# order of target hop is important to invoke looped route logic
-	target_hops = [("Charlie", "Hub"), ("Hub", "Bob"), ("Alice", "Hub"), ("Hub", "Dave")]
+	target_node_pairs = [("Charlie", "Hub"), ("Hub", "Bob"), ("Alice", "Hub"), ("Hub", "Dave")]
 	schedule_generation_function_jamming = partial(
 		lambda duration: JammingSchedule(
 			duration=duration,
-			hop_to_jam_with_own_batch=target_hops))
+			hop_to_jam_with_own_batch=target_node_pairs))
 	simulator = example_j_sim
-	simulator.target_hops = target_hops
+	simulator.target_node_pairs = target_node_pairs
 	simulator.max_num_routes = 10
 	# we need an odd number of slots to test this behavior
 	# i.e.: unjammed slot in two-loop route failed at the second loop
@@ -68,7 +68,7 @@ def test_simulator_jamming_schedule(example_j_sim):
 	simulator.ln_model.add_jammers_channels(
 		send_to_nodes=["Alice", "Charlie", "Hub"],
 		receive_from_nodes=["Dave", "Hub"],
-		num_slots=(DEFAULT_NUM_SLOTS_PER_CHANNEL_IN_DIRECTION + 1) * len(target_hops))
+		num_slots=(DEFAULT_NUM_SLOTS_PER_CHANNEL_IN_DIRECTION + 1) * len(target_node_pairs))
 	duration = 1
 	results = simulator.run_simulation_series(
 		schedule_generation_function_jamming,
@@ -116,17 +116,17 @@ def test_simulator_honest_schedule(example_h_sim):
 
 
 def test_simulator_jamming_fixed_route(example_j_sim):
-	target_hops = [("Alice", "Hub"), ("Hub", "Dave")]
+	target_node_pairs = [("Alice", "Hub"), ("Hub", "Dave")]
 	schedule_generation_function_jamming = partial(
 		lambda duration: JammingSchedule(
 			duration=duration))
 	simulator = example_j_sim
-	simulator.target_hops = target_hops
+	simulator.target_node_pairs = target_node_pairs
 	simulator.jammer_must_route_via_nodes = ["Alice", "Hub", "Dave"]
 	simulator.ln_model.add_jammers_channels(
 		send_to_nodes=["Alice"],
 		receive_from_nodes=["Dave"],
-		num_slots=(DEFAULT_NUM_SLOTS_PER_CHANNEL_IN_DIRECTION + 1) * len(target_hops))
+		num_slots=(DEFAULT_NUM_SLOTS_PER_CHANNEL_IN_DIRECTION + 1) * len(target_node_pairs))
 	duration = 8
 	results = simulator.run_simulation_series(
 		schedule_generation_function_jamming,

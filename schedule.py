@@ -60,7 +60,7 @@ class HonestSchedule(GenericSchedule):
 		amount_function=lambda: lognormal(mean=PaymentFlowParams["AMOUNT_MU"], sigma=PaymentFlowParams["AMOUNT_SIGMA"]),
 		desired_result_function=lambda: True,
 		payment_processing_delay_function=lambda: PaymentFlowParams["MIN_DELAY"] + exponential(PaymentFlowParams["EXPECTED_EXTRA_DELAY"]),
-		payment_generation_delay_function=lambda: exponential(PaymentFlowParams["HONEST_PAYMENT_EVERY_SECONDS"]),
+		payment_generation_delay_function=lambda: exponential(PaymentFlowParams["HONEST_PAYMENTS_PER_SECOND"]),
 		must_route_via_nodes=[]):
 		'''
 			- senders

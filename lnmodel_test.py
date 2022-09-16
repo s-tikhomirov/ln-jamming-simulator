@@ -138,9 +138,9 @@ def example_amounts():
 	return amounts
 
 
-def test_get_channel_graph_from_json():
+def test_get_hop_graph_from_json():
 	ln_model = get_ln_model()
-	g = ln_model.channel_graph
+	g = ln_model.hop_graph
 	assert(all(n in g.nodes() for n in [a, b, c, d, cr]))
 
 	# Alice - Bob has one bi-directional channel
@@ -233,10 +233,10 @@ def test_get_routing_graph_from_json():
 def test_revenue():
 	ln_model = get_ln_model()
 	# all revenues must be zero initially
-	for n in ln_model.channel_graph.nodes():
+	for n in ln_model.hop_graph.nodes():
 		assert(ln_model.get_revenue(n, FeeType.UPFRONT) == 0)
 		assert(ln_model.get_revenue(n, FeeType.SUCCESS) == 0)
-	assert("Alice" in ln_model.channel_graph.nodes())
+	assert("Alice" in ln_model.hop_graph.nodes())
 	# add 10 to Alice's success revenue, it should become 10
 	# also make sure that changes in one revenue type don't affect the other
 	ln_model.add_revenue("Alice", FeeType.SUCCESS, 10)

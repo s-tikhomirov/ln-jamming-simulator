@@ -50,7 +50,7 @@ class LNModel:
 		# Channel graph is an UNDIRECTED graph (MultiGraph).
 		# Each edge corresponds to a channel. Edge id = channel id.
 		# Edge attributes: capacity, directions: [ChannelInDirection0, ChannelInDirection1]
-		self.channel_graph = nx.Graph()
+		self.hop_graph = nx.Graph()
 		# Routing graph is a DIRECTED graph (MultiDiGraph) from the same JSON object.
 		# Each edge corresponds to an enabled (i.e., "active") channel direction.
 		# We only parse cid and capacity (it's relevant for routing).
@@ -66,14 +66,14 @@ class LNModel:
 			if cd["active"]:
 				self.add_edge(src, dst, capacity, cid, upfront_base_fee, upfront_fee_rate, success_base_fee, success_fee_rate)
 		logger.info(f"LN model created.")
-		logger.info(f"Channel graph has {self.channel_graph.number_of_nodes()} nodes and {self.channel_graph.number_of_edges()} channels.")
+		logger.info(f"Channel graph has {self.hop_graph.number_of_nodes()} nodes and {self.hop_graph.number_of_edges()} channels.")
 		logger.info(f"Routing graph has {self.routing_graph.number_of_nodes()} nodes and {self.routing_graph.number_of_edges()} channels.")
 		self.reset_all_revenues()
 
 	def set_capacity(self, src, dst, capacity):
-		target_hop = self.get_hop(src, dst)
-		assert target_hop.get_num_channels() == 1
-		target_channel = [ch for ch in target_hop.get_all_channels()][0]
+		target_node_pair = self.get_hop(src, dst)
+		assert target_node_pair.get_num_channels() == 1
+		target_channel = [ch for ch in target_node_pair.get_all_channels()][0]
 		target_cid = target_channel.get_cid()
 		logger.debug(f"Setting capacity of target channel {target_cid} to {capacity}")
 		target_channel.set_capacity(capacity)
@@ -85,17 +85,17 @@ class LNModel:
 			cid = src[:1] + dst[:1] + "x" + generate_id(length=4)
 		if num_slots is None:
 			num_slots = self.default_num_slots_per_channel_in_direction
-		self.add_edge_to_channel_graph(src, dst, capacity, cid, upfront_base_fee, upfront_fee_rate, success_base_fee, success_fee_rate, num_slots)
+		self.add_edge_to_hop_graph(src, dst, capacity, cid, upfront_base_fee, upfront_fee_rate, success_base_fee, success_fee_rate, num_slots)
 		self.add_edge_to_routing_graph(src, dst, capacity, cid)
 
-	def add_edge_to_channel_graph(self, src, dst, capacity, cid, upfront_base_fee, upfront_fee_rate, success_base_fee, success_fee_rate, num_slots):
+	def add_edge_to_hop_graph(self, src, dst, capacity, cid, upfront_base_fee, upfront_fee_rate, success_base_fee, success_fee_rate, num_slots):
 		for node in (src, dst):
-			if node not in self.channel_graph:
-				self.channel_graph.add_node(node)
+			if node not in self.hop_graph:
+				self.hop_graph.add_node(node)
 				self.set_revenue(node, upfront_revenue=0, success_revenue=0)
-		if not self.channel_graph.has_edge(src, dst):
+		if not self.hop_graph.has_edge(src, dst):
 			hop = Hop()
-			self.channel_graph.add_edge(src, dst, hop=hop)
+			self.hop_graph.add_edge(src, dst, hop=hop)
 		hop = self.get_hop(src, dst)
 		if not hop.has_channel(cid):
 			ch = Channel(capacity, cid)
@@ -134,8 +134,8 @@ class LNModel:
 				self.add_edge(src=node, dst="JammerReceiver", capacity=capacity, num_slots=num_slots)
 
 	def add_revenue(self, node, fee_type, amount):
-		assert node in self.channel_graph
-		self.channel_graph.nodes[node][fee_type.value] += amount
+		assert node in self.hop_graph
+		self.hop_graph.nodes[node][fee_type.value] += amount
 
 	def subtract_revenue(self, node, fee_type, amount):
 		self.add_revenue(node, fee_type, -amount)
@@ -146,8 +146,8 @@ class LNModel:
 		self.add_revenue(to_node, fee_type, amount)
 
 	def get_revenue(self, node, fee_type):
-		assert node in self.channel_graph
-		return self.channel_graph.nodes[node][fee_type.value]
+		assert node in self.hop_graph
+		return self.hop_graph.nodes[node][fee_type.value]
 
 	def get_routing_graph_for_amount(self, amount):
 		# Return a graph view that only includes edges with capacity >= amount with safety margin
@@ -179,30 +179,30 @@ class LNModel:
 
 	def get_hop(self, u_node, d_node):
 		assert u_node != d_node
-		assert self.channel_graph.has_edge(u_node, d_node)
-		return self.channel_graph.get_edge_data(u_node, d_node)["hop"]
+		assert self.hop_graph.has_edge(u_node, d_node)
+		return self.hop_graph.get_edge_data(u_node, d_node)["hop"]
 
 	def reset_all_slots(self, num_slots=None):
 		logger.debug("Resetting slots in all channels")
-		for node_1, node_2 in self.channel_graph.edges():
+		for node_1, node_2 in self.hop_graph.edges():
 			for ch in self.get_hop(node_1, node_2).get_all_channels():
 				for direction in (Direction.Alph, Direction.NonAlph):
 					logger.debug(f"Resetting channel {ch.get_cid()} ({node_1} - {node_2}) in {direction} with num slots = {num_slots}")
 					ch.reset_slots_in_direction(direction, num_slots)
 
 	def set_revenue(self, node, upfront_revenue, success_revenue):
-		assert node in self.channel_graph
-		self.channel_graph.nodes[node][FeeType.UPFRONT.value] = upfront_revenue
-		self.channel_graph.nodes[node][FeeType.SUCCESS.value] = success_revenue
+		assert node in self.hop_graph
+		self.hop_graph.nodes[node][FeeType.UPFRONT.value] = upfront_revenue
+		self.hop_graph.nodes[node][FeeType.SUCCESS.value] = success_revenue
 
 	def reset_all_revenues(self):
 		logger.debug("Resetting all revenues")
-		for node in self.channel_graph.nodes:
+		for node in self.hop_graph.nodes:
 			self.set_revenue(node, upfront_revenue=0, success_revenue=0)
 
 	def set_fee_for_all(self, fee_type, base, rate):
 		logger.debug(f"Setting {fee_type.value} fee for all to: base {base}, rate {rate}")
-		for node_1, node_2 in self.channel_graph.edges():
+		for node_1, node_2 in self.hop_graph.edges():
 			for ch in self.get_hop(node_1, node_2).get_all_channels():
 				for direction in (Direction.Alph, Direction.NonAlph):
 					if ch.is_enabled_in_direction(direction):
@@ -210,7 +210,7 @@ class LNModel:
 
 	def set_upfront_fee_from_coeff_for_all(self, upfront_base_coeff, upfront_rate_coeff):
 		logger.debug(f"Setting upfront fee for all as share of success fee with: base coeff {upfront_base_coeff}, rate coeff {upfront_rate_coeff}")
-		for node_1, node_2 in self.channel_graph.edges():
+		for node_1, node_2 in self.hop_graph.edges():
 			for ch in self.get_hop(node_1, node_2).get_all_channels():
 				for direction in (Direction.Alph, Direction.NonAlph):
 					if ch.is_enabled_in_direction(direction):
@@ -226,7 +226,7 @@ class LNModel:
 			This is done after the simulation is complete.
 		'''
 		# Note: (node_1, node_2) are not ordered!
-		for node_1, node_2 in self.channel_graph.edges():
+		for node_1, node_2 in self.hop_graph.edges():
 			for ch in self.get_hop(node_1, node_2).get_all_channels():
 				for from_node, to_node in ((node_1, node_2), (node_2, node_1)):
 					#logger.debug(f"Resolving HTLCs from {from_node} and {to_node}")
@@ -350,7 +350,7 @@ class LNModel:
 
 	def report_revenues(self):  # pragma: no cover
 		print("\n\n*** Revenues ***")
-		for node in self.channel_graph.nodes:
+		for node in self.hop_graph.nodes:
 			success_revenue = self.get_revenue(node, FeeType.SUCCESS)
 			upfront_revenue = self.get_revenue(node, FeeType.UPFRONT)
 			print("\n", node)

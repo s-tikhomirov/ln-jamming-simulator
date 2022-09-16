@@ -21,10 +21,10 @@ PaymentFlowParams = {
 
 	# in terms of exponential distribution, this is beta
 	# (aka scale, aka the inverse of rate lambda)
-	"HONEST_PAYMENT_EVERY_SECONDS": 10,
+	"HONEST_PAYMENTS_PER_SECOND": 0.1,
 
 	# the probability that a payment fails at a hop
-	# because the _next_ channel can't handle it (e.channel_graph., low balance)
+	# because the _next_ channel can't handle it (e.hop_graph., low balance)
 	#"PROB_NEXT_CHANNEL_LOW_BALANCE" : 0.05,
 }
 
