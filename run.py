@@ -18,6 +18,7 @@ DEFAULT_UPFRONT_RATE_COEFF_RANGE = [0]
 ABCD_SNAPSHOT_FILENAME = "./snapshots/listchannels_abcd.json"
 WHEEL_SNAPSHOT_FILENAME = "./snapshots/listchannels_wheel.json"
 REAL_SNAPSHOT_FILENAME = "./snapshots/listchannels-2021-12-09.json"
+VIRTUAL_SNAPSHOT_FILENAME = "./snapshots/small-node-0263a6.json"
 
 
 def main():
@@ -25,7 +26,7 @@ def main():
 	parser.add_argument(
 		"--scenario",
 		type=str,
-		choices={"abcd", "wheel-hardcoded-route", "wheel", "wheel-long-routes", "real"},
+		choices={"abcd", "wheel-hardcoded-route", "wheel", "wheel-long-routes", "real", "virtual"},
 		help="LN graph JSON filename."
 	)
 	parser.add_argument(
@@ -183,7 +184,6 @@ def main():
 		logger.debug(f"Initializing randomness seed: {args.seed}")
 		seed(args.seed)
 
-	assert args.scenario in ("abcd", "wheel-hardcoded-route", "wheel", "real")
 	if args.scenario == "abcd":
 		scenario = Scenario(
 			scenario_name=args.scenario,
@@ -223,24 +223,45 @@ def main():
 			target_node=target_node,
 			num_target_node_pairs=args.num_target_node_pairs,
 			honest_must_route_via_nodes=[target_node])
+	elif args.scenario == "virtual":
+		# a real target node with neighbors plus a "virtual" node representing the LN as a whole
+		# the LN virtual node connects to every other node
+		small_node = "0263a6d2f0fed7b1e14d01a0c6a6a1c0fae6e0907c0ac415574091e7839a00405b"
+		target_node = small_node
+		neighbors = (
+			"034502648ec5f4c673830e33984e72a03185f9df6758977fc3c67fade393d400e5",
+			"03e5589e3801586ada3515728c4602716b62f0a50ca59f1b348a6c846d55eee4a5",
+			"0391b71b1e30cce2f0e25dbe4ce848c19e159d1677a8368d1eb3e50a34d14f74f4",
+			"029b17d9d393bb0a7db2cf14f96309b01e764f0553a5a50791e6d55202d9279191",
+			"024a8228d764091fce2ed67e1a7404f83e38ea3c7cb42030a2789e73cf3b341365"
+		)
+		target_node_pairs = [(target_node, n) for n in neighbors] + [(n, target_node) for n in neighbors]
+		scenario = Scenario(
+			scenario_name=args.scenario,
+			snapshot_filename=VIRTUAL_SNAPSHOT_FILENAME,
+			honest_senders=neighbors,
+			honest_receivers=neighbors,
+			target_node=target_node,
+			target_node_pairs=target_node_pairs,
+			num_target_node_pairs=args.num_target_node_pairs,
+			honest_must_route_via_nodes=[target_node])
 
 	# Actually run the simulations
-	if args.scenario == "real":
+	if args.scenario in ("real", "virtual"):
 		target_channel_capacity_range = [None]
 	else:
 		M = 1000 * 1000
 		target_channel_capacity_range = [int(n * M) for n in [0.1, 0.2, 0.5, 1, 2, 5, 10]]
 	# doesn't matter for ABCD, runs fast enough for real graph (??)
-	max_route_length = 6
-	max_target_node_pairs_per_route = 3
+	max_route_length = 14
+	#max_target_node_pairs_per_route = 10
 	honest_payments_per_second = 1
-	upfront_base_coeff_range = [n / 10000 for n in range(200 + 1)]
+	upfront_base_coeff_range = [n / 100000 for n in range(100, 500 + 1)]
 	breakeven_upfront_coeffs = []
-	scenario_num, total_num_scenarios = 0, len(target_channel_capacity_range) * len(upfront_base_coeff_range)
+	scenario_num, total_num_scenarios = 0, len(target_channel_capacity_range)
 	logger.info(f"Target capacities: {target_channel_capacity_range}")
 	logger.info(f"Upfront base coeff range: {upfront_base_coeff_range}")
 	logger.info(f"Total scenarios: {total_num_scenarios}")
-	#exit()
 	for target_channel_capacity in target_channel_capacity_range:
 		scenario_num += 1
 		percent_done = round(100 * scenario_num / total_num_scenarios)
@@ -255,15 +276,15 @@ def main():
 			max_num_attempts_per_route_jamming=args.max_num_attempts_jamming,
 			max_num_routes_honest=args.max_num_routes_honest,
 			num_runs_per_simulation=args.num_runs_per_simulation,
-			max_target_node_pairs_per_route=max_target_node_pairs_per_route,
+			max_target_node_pairs_per_route=len(target_node_pairs),
 			max_route_length=max_route_length,
 			honest_payments_per_second=honest_payments_per_second,
 			target_channel_capacity=target_channel_capacity,
 			compact_output=(args.scenario == "real"),
 			extrapolate_jamming_revenues=args.extrapolate_jamming_revenues)
 		breakeven_upfront_coeffs.append((target_channel_capacity, breakeven_upfront_base_coeff))
-		#scenario.results_to_json_file(start_timestamp + scenario_num)
-		#scenario.results_to_csv_file(start_timestamp + scenario_num)
+		scenario.results_to_json_file(start_timestamp + scenario_num)
+		scenario.results_to_csv_file(start_timestamp + scenario_num)
 
 	end_timestamp = int(time())
 	running_time = end_timestamp - start_timestamp

@@ -159,7 +159,7 @@ class Scenario:
 
 		if target_channel_capacity is not None:
 			logger.debug(f"Target channel capacity is given: {target_channel_capacity}")
-			assert len(self.target_node_pairs) == 1
+			assert len(self.target_node_pairs) == 1, target_channel_capacity
 			target_u_node, target_d_node = self.target_node_pairs[0]
 			self.ln_model.set_capacity(target_u_node, target_d_node, target_channel_capacity)
 
@@ -175,10 +175,10 @@ class Scenario:
 		if extrapolate_jamming_revenues:
 			logger.info(f"Extrapolating jamming results from one upfront coefficient")
 
-		logger.debug(f"Starting jamming simulations with ranges: {upfront_base_coeff_range} {upfront_rate_coeff_range}")
 		logger.info(f"Schedule duration: {jamming_schedule_duration}")
 		logger.info(f"Simulation duration: {jamming_simulation_duration}")
 		logger.info(f"Number of jamming batches: {num_jamming_batches}")
+		logger.info(f"Starting jamming simulations with ranges: {upfront_base_coeff_range} {upfront_rate_coeff_range}")
 		j_sim = JammingSimulator(
 			ln_model=self.ln_model,
 			max_num_routes=None,
@@ -198,7 +198,7 @@ class Scenario:
 			normalize_results_for_duration=normalize_results_for_duration,
 			extrapolate_jamming_revenues=extrapolate_jamming_revenues)
 
-		logger.debug(f"Starting honest simulations with ranges: {upfront_base_coeff_range} {upfront_rate_coeff_range}")
+		logger.info(f"Starting honest simulations with ranges: {upfront_base_coeff_range} {upfront_rate_coeff_range}")
 		h_sim = HonestSimulator(
 			ln_model=self.ln_model,
 			max_num_routes=max_num_routes_honest,
