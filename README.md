@@ -39,4 +39,4 @@ Sending a `Payment` along the route involves these stages, until the payment fai
 - push a new `Htlc` along with its future resolution time into the `ChannelDirection` in question;
 - if there are no free slots, try resolving the oldest HTLC; if that fails, fail the payment.
 
-For more details on the functionality of individual classes, see [classes.md].
+For more details on the functionality of individual classes, see [classes.md](classes.md).
