@@ -34,7 +34,7 @@ This means that at each routing step, we first check whether the next hop has a 
 If it does, we continue forwarding.
 If it does not (all slots are full), we check the timestamp of the _earliest_ in-flight HTLC is.
 (The priority queue makes it easy to query the element with the lowest resolution timestamp.)
-If the timestamp of the earliest HTLC is in the past (i.e., it should already have been resolved), we pop it from the queue and apply, freeing up a slot for the payment we currently route.
+If the timestamp of the earliest HTLC is in the past (i.e., it should already have been resolved), we pop it from the queue and resolve, freeing up a slot for the payment we currently route.
 If no such HTLC can be resolves, the channel is considered jammed, and the current payment is failed.
 
 Note that _during_ simulation channels do store outdated HTLCs.

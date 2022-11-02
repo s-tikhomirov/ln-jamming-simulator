@@ -31,39 +31,20 @@ class Simulator:
 			- ln_model
 				An instance of LNModel to run the simulations with.
 
-			- target_node_pairs
-				What the attacker wants to jam.
+			- max_num_routes
+				The maximum number of routes to try.
 
-			- target_node
-				Only used for accounting of how many times we hit it during jamming.
+			- max_num_attempts_per_route
+				The maximum number of attempts to make per route.
 
-			- max_num_attempts_per_route_honest
-				The maximum number of attempts to send an honest payment.
+			- max_target_node_pairs_per_route
+				The maximum desired number of target node pairs in a jammer's route.
 
-			- max_num_attempts_per_route_jamming
-				The maximul number of attempts to send a jam (which is probably higher than that for honest payments).
-
-			- max_num_routes_honest
-				The maximal number of different routes to try before an honest payment reaches the receiver.
-
-			- max_num_routes_jamming
-				The maximal number of different routes to try before all target node pairs are fully jammed.
+			- max_route_length
+				The maximum route length.
 
 			- num_runs_per_simulation
 				The number of runs per simulation to average the results across.
-
-			- subtract_last_hop_upfront_fee_for_honest_payments
-				Apply body_for_amount at Payment construction for honest payment.
-				Jams are always constructed without such adjustment to stay above the dust limit at all hops.
-
-			- jammer_must_route_via_nodes
-				Override the router logic in favor of a hard-coded route.
-
-			- max_target_node_pairs_per_route
-				Max desired number of target node pairs in a jammer's route.
-
-			- max_route_length
-				Max number of hops per route.
 		'''
 		self.ln_model = ln_model
 		self.max_num_routes = max_num_routes
@@ -80,7 +61,7 @@ class Simulator:
 		num_runs_per_simulation=None,
 		normalize_results_for_duration=False):
 		'''
-			Run a series of simulations, iteration through ranges of upfront fee coefficient pairs.
+			Run a series of simulations, iterating through ranges of upfront fee coefficient pairs.
 		'''
 		simulation_series_results = []
 		self.normalize_results_for_duration = normalize_results_for_duration
@@ -105,7 +86,7 @@ class Simulator:
 
 	def run_simulation(self, schedule_generation_function, duration, num_runs_per_simulation, normalize_results_for_duration=False):
 		'''
-			Run a simulation self.num_runs_per_simulation times and average results.
+			Run a simulation self.num_runs_per_simulation times and average the results.
 		'''
 		tmp_num_sent, tmp_num_failed, tmp_num_reached_receiver, tmp_num_hit_target_node = [], [], [], []
 		tmp_revenues = defaultdict(list)
@@ -179,6 +160,21 @@ class Simulator:
 		return self.num_sent_total, self.num_failed_total, self.num_reached_receiver_total, self.num_hit_target_node
 
 	def create_payment(self, route, amount, processing_delay, desired_result):
+		'''
+			Create a Payment object for a given route and event parameters.
+
+			- route
+				A route for the payment
+
+			- amount
+				The payment amount (includes success-case fee, but does not include upfront fee).
+
+			- processing_delay
+				The delay for HTLCs created along the route (only stored if the payment reaches the receiver).
+
+			- desired_result
+				True for honest payments, False for jams.
+		'''
 		p, u_nodes, d_nodes = None, route[:-1], route[1:]
 		for u_node, d_node in reversed(list(zip(u_nodes, d_nodes))):
 			logger.debug(f"Wrapping payment for fee policy from {u_node} to {d_node}")
@@ -276,9 +272,8 @@ class JammingSimulator(Simulator):
 			Run an optimized jamming-based simulation.
 			A simulation is ran just once for _some_ non-zero success base coefficient.
 			For all other upfront fee coefficients, revenues are re-scaled without running routing.
-			Limitations and assumptions:
-			- this only works for jams (i.e., no success-case fees are paid ever)
-			- there is _some_ non-zero element in upfront base or upfront rate coefficients list
+			This only works for jams (i.e., if no success-case fees are paid ever).
+			There must be _some_ non-zero element in upfront base or upfront rate coefficients list.
 		'''
 		simulation_series_results = []
 		if num_runs_per_simulation is None:
@@ -379,6 +374,8 @@ class JammingSimulator(Simulator):
 		logger.debug(f"Jammed hop {jammed_hop}")
 
 	def all_target_node_pairs_are_really_jammed(self):
+		# Query the _real_ jammed status from the hop graph (used for debugging).
+		# The jammer can't (shouldn't) see this, it can only look at error types returned.
 		return all(self.ln_model.get_hop(*hop).cannot_forward(Direction(*hop), self.now) for hop in self.target_node_pairs)
 
 	def get_jammed_status_of_hops(self, hops):

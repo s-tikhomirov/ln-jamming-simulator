@@ -6,7 +6,7 @@ logger = logging.getLogger(__name__)
 
 class Event:
 	'''
-		A planned payment stored in a Schedule.
+		An Event is a planned payment (honest or jam) stored in a Schedule.
 	'''
 
 	def __init__(self, sender, receiver, amount, processing_delay, desired_result, must_route_via_nodes=[]):

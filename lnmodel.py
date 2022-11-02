@@ -6,7 +6,7 @@ from direction import Direction
 from enumtypes import ErrorType, FeeType
 from channel import Channel
 from hop import Hop
-from htlc import InFlightHtlc
+from htlc import Htlc
 from params import K, M, ProtocolParams, FeeParams
 from utils import generate_id
 
@@ -34,7 +34,7 @@ class LNModel:
 
 			- no_balance_failures
 				If True, channels don't fail because of low balance.
-				If False, channels fail with probability depending on amount and capacity.
+				If False, channels fail with probability = amount / capacity.
 
 			- capacity_filtering_safety_margin
 				An extra allowed capacity allowed when filtering graph for sending a given amount.
@@ -47,14 +47,13 @@ class LNModel:
 		self.capacity_filtering_safety_margin = capacity_filtering_safety_margin
 
 	def get_graphs_from_json(self, snapshot_json):
-		# Channel graph is an UNDIRECTED graph (MultiGraph).
-		# Each edge corresponds to a channel. Edge id = channel id.
-		# Edge attributes: capacity, directions: [ChannelInDirection0, ChannelInDirection1]
+		# The hop graph is an UNDIRECTED graph (Graph).
+		# Each edge corresponds to a Hop (all channels between a pair of nodes).
+		# The routing graph is a DIRECTED graph (MultiDiGraph) constructed from the same JSON object.
+		# Each edge corresponds to an enabled channel direction.
+		# We only parse cid and capacity (as it's relevant for path-finding).
+		# All other data (fees, HTLCs, etc) is stored in the hop graph.
 		self.hop_graph = nx.Graph()
-		# Routing graph is a DIRECTED graph (MultiDiGraph) from the same JSON object.
-		# Each edge corresponds to an enabled (i.e., "active") channel direction.
-		# We only parse cid and capacity (it's relevant for routing).
-		# All other attributes (fee functions, revenues) are stored in the undirected channel graph.
 		self.routing_graph = nx.MultiDiGraph()
 		logger.info(f"Creating LN model...")
 		for cd in snapshot_json["channels"]:
@@ -66,11 +65,12 @@ class LNModel:
 			if cd["active"]:
 				self.add_edge(src, dst, capacity, cid, upfront_base_fee, upfront_fee_rate, success_base_fee, success_fee_rate)
 		logger.info(f"LN model created.")
-		logger.info(f"Channel graph has {self.hop_graph.number_of_nodes()} nodes and {self.hop_graph.number_of_edges()} channels.")
+		logger.info(f"Hop graph has {self.hop_graph.number_of_nodes()} nodes and {self.hop_graph.number_of_edges()} channels.")
 		logger.info(f"Routing graph has {self.routing_graph.number_of_nodes()} nodes and {self.routing_graph.number_of_edges()} channels.")
 		self.reset_all_revenues()
 
 	def set_capacity(self, src, dst, capacity):
+		# Set capacity to the (first) channel in the hop between src and dst.
 		target_node_pair = self.get_hop(src, dst)
 		assert target_node_pair.get_num_channels() == 1
 		target_channel = [ch for ch in target_node_pair.get_all_channels()][0]
@@ -81,6 +81,7 @@ class LNModel:
 		self.routing_graph[src][dst][target_cid]["capacity"] = capacity
 
 	def add_edge(self, src, dst, capacity, cid=None, upfront_base_fee=0, upfront_fee_rate=0, success_base_fee=0, success_fee_rate=0, num_slots=None):
+		# Add a new edge to both the hop graph and the routing graph.
 		if cid is None:
 			cid = src[:1] + dst[:1] + "x" + generate_id(length=4)
 		if num_slots is None:
@@ -89,10 +90,11 @@ class LNModel:
 		self.add_edge_to_routing_graph(src, dst, capacity, cid)
 
 	def add_edge_to_hop_graph(self, src, dst, capacity, cid, upfront_base_fee, upfront_fee_rate, success_base_fee, success_fee_rate, num_slots):
+		# Add a new edge to the hop graph.
 		for node in (src, dst):
 			if node not in self.hop_graph:
 				self.hop_graph.add_node(node)
-				self.set_revenue(node, upfront_revenue=0, success_revenue=0)
+				self.reset_revenue(node)
 		if not self.hop_graph.has_edge(src, dst):
 			hop = Hop()
 			self.hop_graph.add_edge(src, dst, hop=hop)
@@ -108,12 +110,14 @@ class LNModel:
 		ch.set_fee_in_direction(direction, FeeType.SUCCESS, success_base_fee, success_fee_rate)
 
 	def add_edge_to_routing_graph(self, src, dst, capacity, cid):
-		# We need cid here as well as in the channel graph.
+		# Add a new edge to the routing graph.
+		# We need cid here as well as in the hop graph.
 		# We look for routes in the (filtered) routing graph,
-		# and then pull hop info from the channel graph based on the chosen cid.
+		# and then pull hop info from the hop graph based on the chosen cid.
 		self.routing_graph.add_edge(src, dst, cid, capacity=capacity)
 
 	def add_jammers_channels(self, send_to_nodes=[], receive_from_nodes=[], num_slots=ProtocolParams["NUM_SLOTS"], capacity=1000000):
+		# Add edges representing the jammer's channels.
 		assert send_to_nodes or receive_from_nodes
 		for node in send_to_nodes:
 			if not ("JammerSender" in self.routing_graph and "JammerSender" in self.routing_graph.predecessors(node)):
@@ -134,23 +138,27 @@ class LNModel:
 				self.add_edge(src=node, dst="JammerReceiver", capacity=capacity, num_slots=num_slots)
 
 	def add_revenue(self, node, fee_type, amount):
+		# Add amount to a node's accumulated revenue of a given fee type (success-case or upfront).
 		assert node in self.hop_graph
 		self.hop_graph.nodes[node][fee_type.value] += amount
 
 	def subtract_revenue(self, node, fee_type, amount):
+		# Subtract amount from the node's accumulated revenue of a given type.
 		self.add_revenue(node, fee_type, -amount)
 
 	def shift_revenue(self, from_node, to_node, fee_type, amount):
+		# Shift amount from one node to another (from_node pays amount to to_node).
 		logger.debug(f"{from_node} pays {to_node} {amount} in {fee_type.value} fee")
 		self.subtract_revenue(from_node, fee_type, amount)
 		self.add_revenue(to_node, fee_type, amount)
 
 	def get_revenue(self, node, fee_type):
+		# Return the node's revenue of a given fee type.
 		assert node in self.hop_graph
 		return self.hop_graph.nodes[node][fee_type.value]
 
 	def get_routing_graph_for_amount(self, amount):
-		# Return a graph view that only includes edges with capacity >= amount with safety margin
+		# Return a routing graph view that only includes edges with capacity >= amount + safety margin
 		amount_with_safety_margin = (1 + self.capacity_filtering_safety_margin) * amount
 
 		def filter_edges(n1, n2, cid):
@@ -159,6 +167,8 @@ class LNModel:
 		return nx.subgraph_view(self.routing_graph, lambda _: True, filter_edges)
 
 	def get_shortest_routes(self, sender, receiver, amount):
+		# A generator of shortest routes from sender to receiver for amount.
+		# Yields one route at a time when called.
 		route = None
 		logger.debug(f"Finding route from {sender} to {receiver} for {amount}")
 		routing_graph = self.get_routing_graph_for_amount(amount)
@@ -178,11 +188,13 @@ class LNModel:
 				route = next(routes, None)
 
 	def get_hop(self, u_node, d_node):
+		# Return the hop between u_node and d_node along with all associated data.
 		assert u_node != d_node
 		assert self.hop_graph.has_edge(u_node, d_node)
 		return self.hop_graph.get_edge_data(u_node, d_node)["hop"]
 
 	def reset_all_slots(self, num_slots=None):
+		# Reset HTLC queues in all channels (erases in-flight HTLCs; done between simulations).
 		logger.debug("Resetting slots in all channels")
 		for node_1, node_2 in self.hop_graph.edges():
 			for ch in self.get_hop(node_1, node_2).get_all_channels():
@@ -190,17 +202,19 @@ class LNModel:
 					logger.debug(f"Resetting channel {ch.get_cid()} ({node_1} - {node_2}) in {direction} with num slots = {num_slots}")
 					ch.reset_slots_in_direction(direction, num_slots)
 
-	def set_revenue(self, node, upfront_revenue, success_revenue):
+	def reset_revenue(self, node):
+		# Set the node's revenue to zero (done between simulations).
 		assert node in self.hop_graph
-		self.hop_graph.nodes[node][FeeType.UPFRONT.value] = upfront_revenue
-		self.hop_graph.nodes[node][FeeType.SUCCESS.value] = success_revenue
+		self.hop_graph.nodes[node][FeeType.UPFRONT.value] = 0
+		self.hop_graph.nodes[node][FeeType.SUCCESS.value] = 0
 
 	def reset_all_revenues(self):
 		logger.debug("Resetting all revenues")
 		for node in self.hop_graph.nodes:
-			self.set_revenue(node, upfront_revenue=0, success_revenue=0)
+			self.reset_revenue(node)
 
 	def set_fee_for_all(self, fee_type, base, rate):
+		# Set the fee parameters of a given type to given values for all channels.
 		logger.debug(f"Setting {fee_type.value} fee for all to: base {base}, rate {rate}")
 		for node_1, node_2 in self.hop_graph.edges():
 			for ch in self.get_hop(node_1, node_2).get_all_channels():
@@ -209,6 +223,7 @@ class LNModel:
 						ch.in_direction(direction).set_fee(fee_type, base, rate)
 
 	def set_upfront_fee_from_coeff_for_all(self, upfront_base_coeff, upfront_rate_coeff):
+		# Set upfront fee parameters from existing success-case fees by scaling them with given coefficients.
 		logger.debug(f"Setting upfront fee for all as share of success fee with: base coeff {upfront_base_coeff}, rate coeff {upfront_rate_coeff}")
 		for node_1, node_2 in self.hop_graph.edges():
 			for ch in self.get_hop(node_1, node_2).get_all_channels():
@@ -221,12 +236,9 @@ class LNModel:
 							upfront_rate_coeff * ch_in_dir.success_fee_rate)
 
 	def finalize_in_flight_htlcs(self, cutoff_time):
-		'''
-			Apply all in-flight htlcs with timestamp < now.
-			This is done after the simulation is complete.
-		'''
-		# Note: (node_1, node_2) are not ordered!
+		# Resolve all outdated HTLCs (done after the simulation is complete).
 		for node_1, node_2 in self.hop_graph.edges():
+			# Note: the order of (node_1, node_2) doesn't matter!
 			for ch in self.get_hop(node_1, node_2).get_all_channels():
 				for from_node, to_node in ((node_1, node_2), (node_2, node_1)):
 					#logger.debug(f"Resolving HTLCs from {from_node} and {to_node}")
@@ -234,7 +246,7 @@ class LNModel:
 					if ch.is_enabled_in_direction(direction):
 						ch_in_dir = ch.in_direction(direction)
 						while not ch_in_dir.all_slots_free():
-							if ch_in_dir.get_top_timestamp() > cutoff_time:
+							if ch_in_dir.get_earliest_htlc_resolution_time() > cutoff_time:
 								break
 							resolution_time, htlc = ch_in_dir.pop_htlc()
 							#logger.debug(f"Released HTLC {htlc} with resolution time {next_htlc_time}")
@@ -243,11 +255,9 @@ class LNModel:
 						#logger.debug(f"No more HTLCs to resolve up to time ({cutoff_time})")
 
 	def attempt_send_payment(self, payment, sender, now, attempt_num=0):
-		'''
-			Try sending a payment.
-			The route is encoded within the payment,
-			apart from the sender, which is provided as a separate argument.
-		'''
+		# Try sending a payment.
+		# The route (except the sender) is encoded within the payment.
+		# The sender is provided as a separate argument.
 		payment_attempt_id = payment.id + "-" + str(attempt_num)
 		logger.debug(f"{sender} makes payment attempt {payment_attempt_id}")
 		last_node_reached, first_node_not_reached = sender, payment.downstream_node
@@ -261,23 +271,22 @@ class LNModel:
 			u_node, d_node = d_node, p.downstream_node
 			last_node_reached, first_node_not_reached = u_node, d_node
 			is_last_hop = p.downstream_payment is None
-
 			logger.debug(f"Trying to route via cheapest channel from {u_node} to {d_node}")
 			hop = self.get_hop(u_node, d_node)
 			direction = Direction(u_node, d_node)
 			has_free_slot = hop.really_can_forward_in_direction_at_time(direction, now, p.get_amount())
 			if has_free_slot:
 				# A channel may be able to forward with one free slot,
-				# but we may need multiple slots to store HTLCs already created for this hop in this (circular) payment.
-				# We now try to ensure as many slots as we really need!
-				# We may pop some (outdated) HTLCs while doing that, and apply them.
+				# but we may need multiple slots to store HTLCs already created for this hop if the route is looped.
+				# We now try to ensure (free up) as many slots as we really need!
+				# We may pop some (outdated) HTLCs while doing that, and resolve them.
 				# TODO: what happens after the cheapest channel is jammed?
 				chosen_ch = hop.get_cheapest_channel_really_can_forward(direction, now, p.get_amount())
 				chosen_ch_in_dir = chosen_ch.in_direction(direction)
 				chosen_cid = chosen_ch.get_cid()
 				logger.debug(f"Chosen channel {chosen_cid}")
 				# Construct an HTLC to keep in a temporary dictionary until we know if we reach the receiver
-				in_flight_htlc = InFlightHtlc(payment_attempt_id, p.success_fee, p.desired_result)
+				in_flight_htlc = Htlc(payment_attempt_id, p.success_fee, p.desired_result)
 				unstored_htlcs_for_hop[(u_node, d_node)].append((chosen_ch.get_cid(), direction, now + p.processing_delay, in_flight_htlc))
 				num_slots_needed_for_this_hop = len(unstored_htlcs_for_hop[(u_node, d_node)])
 				has_free_slot, popped_htlcs = chosen_ch_in_dir.ensure_free_slots(now, num_slots_needed=num_slots_needed_for_this_hop)
@@ -292,6 +301,7 @@ class LNModel:
 				break
 
 			# Deliberately fail the payment with some probability
+			# Note: this isn't used in simulations.
 			if random() < chosen_ch_in_dir.deliberately_fail_prob:
 				logger.debug(f"{u_node} deliberately failed payment {payment_attempt_id}")
 				error_type = chosen_ch_in_dir.spoofing_error_type
@@ -315,7 +325,7 @@ class LNModel:
 				fee_paid = p.pays_fee(fee_type)
 				logger.debug(f"{fee_type} fee at {chosen_cid} required / offered: {fee_required} / {fee_paid}")
 			'''
-			if not chosen_ch_in_dir.enough_total_fee(p, zero_success_fee):
+			if not chosen_ch_in_dir.enough_fee(p, zero_success_fee):
 				error_type = ErrorType.LOW_FEE
 				break
 

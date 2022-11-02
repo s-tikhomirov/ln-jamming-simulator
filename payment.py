@@ -9,7 +9,7 @@ class Payment:
 	'''
 		A Payment encodes the channel state update between two nodes.
 		A payment is 'nested': a payment contains the downstream payment.
-		For the inner-most payment, downstream payment is None.
+		For the last-hop payment, the downstream payment is None.
 	'''
 
 	def __init__(
@@ -51,7 +51,6 @@ class Payment:
 
 				- last_hop_body
 					How much the receiver will get if the payment succeeds.
-
 		'''
 		# Either channel in direction or fee functions must be provided, but not both!
 		ch_in_dir_provided = channel_in_direction is not None
@@ -72,7 +71,7 @@ class Payment:
 			logger.debug(f"Receiver will get {last_hop_body} (without fees)")
 			assert last_hop_body > 0
 			self.id = generate_id()
-			# this might have been adjusted by the sender to exclude upfront fee
+			# payment body might have been adjusted by the sender to exclude upfront fee
 			self.body = last_hop_body
 			# success-case fee for the last hop is zero by definition
 			self.success_fee = 0
@@ -80,14 +79,14 @@ class Payment:
 			self.desired_result = desired_result
 		else:
 			self.id = downstream_payment.id
-			# this hop's payment body is the downstream payment amount
+			# this hop's payment _body_ is the downstream payment _amount_
 			self.body = downstream_payment.get_amount()
-			# success-case fee is calculated based on BODY
+			# success-case fee is calculated based on _body_
 			self.success_fee = success_fee_function(self.body) + downstream_payment.success_fee
-			# copy over the processing delay from downstream payment
+			# copy over the processing delay from downstream (delay on all hops is the same)
 			self.processing_delay = downstream_payment.processing_delay
 			self.desired_result = downstream_payment.desired_result
-		# upfront-fee is calculated based on AMOUNT
+		# upfront-fee is calculated based on _amount_
 		downstream_upfront_fee = 0 if downstream_payment is None else downstream_payment.upfront_fee
 		self.upfront_fee = upfront_fee_function(self.get_amount()) + downstream_upfront_fee
 

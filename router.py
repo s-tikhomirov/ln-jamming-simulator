@@ -8,19 +8,47 @@ logger = logging.getLogger(__name__)
 
 
 class Router:
+	'''
+		A class for route generation.
+
+		This is mostly used for jamming simulations, as jammers use non-trivial routes through victim hops.
+	'''
 
 	def __init__(self, ln_model, amount, sender, receiver, max_target_node_pairs_per_route=None, max_route_length=None):
+		'''
+			- ln_model
+				LNModel of (a subset of) the Lightning network.
+
+			- amount
+				Amount to be forwarded.
+
+			- sender
+				The payment sender.
+
+			- receiver
+				The payment receiver.
+
+			- max_target_node_pairs_per_route
+				The maximum number of target node pairs (hops) a route will try to include in the route.
+				Higher values make jamming more efficient but slow down route calculation.
+
+			- max_route_length
+				The maximum length (number of nodes) of routes suggested.
+		'''
 		self.ln_model = ln_model
+		# filter the routing graph to only include channels suitable for the given amount.
 		self.g = nx.MultiDiGraph(ln_model.get_routing_graph_for_amount(amount))
 		self.sender = sender
 		self.receiver = receiver
 		self.max_route_length = ProtocolParams["MAX_ROUTE_LENGTH"] if max_route_length is None else max_route_length
+		# the number of routing nodes in the route (i.e., excluding sender and receiver)
 		max_route_length_minus_two = self.max_route_length - 2
 		self.max_target_node_pairs_per_route = max_route_length_minus_two if max_target_node_pairs_per_route is None else max(1, min(max_target_node_pairs_per_route, self.max_route_length - 2))
 		assert(self.max_target_node_pairs_per_route > 0)
 		self.update_route_generator(target_node_pairs=[], allow_repeated_hops=True)
 
 	def update_route_generator(self, target_node_pairs, max_route_length=None, allow_repeated_hops=True):
+		# update route generator for a new set of target node pairs
 		self.target_node_pairs = target_node_pairs
 		if target_node_pairs:
 			self.max_target_node_pairs_per_route = min(self.max_target_node_pairs_per_route, len(self.target_node_pairs))
@@ -32,6 +60,7 @@ class Router:
 		self.routes = self.get_routes_via_target_node_pairs()
 
 	def pre_calculate_paths(self, sender, receiver):
+		# pre-calculate paths from sender to all nodes and from all nodes to receiver (efficiency optimization)
 		self.paths_from_sender = nx.shortest_path(self.g, source=sender)
 		self.paths_to_receiver = nx.shortest_path(self.g, target=receiver)
 		for hop in self.target_node_pairs:
@@ -44,9 +73,12 @@ class Router:
 		return next(self.routes)
 
 	def remove_hop(self, hop):
+		# remove an edge of the (temporary) filtered routing graph
+		# this is done when a channel is jammed, to exclude it from further routes
 		self.g.remove_edge(hop[0], hop[1])
 
 	def get_routes_via_target_node_pairs(self, min_target_node_pairs_per_route=1):
+		# generate routes that go through (some subset of) target node pairs
 		found_routes = set()
 		target_node_pairs_per_route = self.max_target_node_pairs_per_route
 		while target_node_pairs_per_route >= min_target_node_pairs_per_route:
@@ -76,6 +108,7 @@ class Router:
 		return True
 
 	def get_shortest_route_via_hops(self, hops_permutation):
+		# get the shortest route that goes through given hops in a given order (one permutation)
 		# TODO: should we return one route, or yield multiple routes if possible via a given permutation?
 		#logger.debug(f"Searching for route from {self.sender} to {self.receiver} via {hops_permutation}")
 		prev_d_node = None
@@ -122,6 +155,8 @@ class Router:
 
 	@staticmethod
 	def first_permutation_element_index_not_in_path(permutation, route):
+		# a suitable route should include all node pairs from a permutation in that order
+		# we look for the index of the first permutation element that is _not_ in the route
 		if not permutation:
 			return None
 		current_hop, i = permutation[0], 0
@@ -138,6 +173,7 @@ class Router:
 
 	@staticmethod
 	def is_permutation_in_path(permutation, route):
+		# return True if all node pairs in a permutation are in the route in that order
 		i = Router.first_permutation_element_index_not_in_path(permutation, route)
 		return i is None
 

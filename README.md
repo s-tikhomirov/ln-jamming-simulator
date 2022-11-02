@@ -4,29 +4,26 @@ A simulator for Lightning Network payments with unconditional fees, aimed at pre
 
 See paper: [Unjamming Lightning: A Systematic Approach](https://eprint.iacr.org/2022/1454).
 
+
 ## Quick start
 
-TODO: add a guide on how to run it.
+Requires `NetworkX` and `NumPy`.
+Tests require `pytest`.
 
+How to run it:
 
-Launch with `run.py`. Some arguments that may be specified:
-- whether to use one of the small testing graphs, of the full real graph
-- target node: if provided, the jammer aims to jam all its adjacent nodes
-- target node pairs: an alternative way to specify target node pairs is to list them explicitly
-- honest senders and honest receivers: honest payment flow will be generated from a random sender node to a random receiver node (both picked uniformly for now)
-- which nodes the jammer MUST send jams through - used in the experiment with jamming through a fixed route
-- which nodes the jammer connects to (for sending jams from and for receiving jams to). By default, the jammer connects to all endpoints of all target node pairs.
-- which nodes honest senders MUST send jams through - used in the "wheel" topology experiment to model the payment flow through the hub specifically.
-- the maximum number of target node pairs per route (explained below in the routing section).
+```
+$ python run.py --num_runs_per_simulation=10 --duration=300 --scenario=virtual --log_level=info --num_jamming_batches=5
+```
+
+See `run.py -help` for details.
 
 
 ## Architecture
 
-The general architecture is as follows:
+The general architecture is as follows.
 
-TODO: add diagram of the architecture.
-
-During one launch of the code, the `Simulator` executes a simulation `Scenario`.
+The `Simulator` executes a simulation `Scenario`.
 A `Scenario` describes the network topology along with the properties of honest and malicious payments.
 The goal of a simulation is to estimate the revenue of certain nodes with and without an attack.
 The results are written as JSON and CSV files into `/results` (filenames include the current timestamp).

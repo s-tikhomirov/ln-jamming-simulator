@@ -2,13 +2,25 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-class InFlightHtlc:
+class Htlc:
 	'''
 		An in-flight HTLC.
-		As we don't model balances, an HTLC only contrains success-case fee.
+		Note: we don't model balances.
+		An HTLC only contains success-case fee, and doesn't include the payment amount.
 	'''
 
 	def __init__(self, payment_id, success_fee, desired_result):
+		'''
+			- payment_id
+				Payment identifier (randomly generated).
+
+			- success_fee
+				Success-case fee to be paid if the payment resolves and its desired result is True.
+
+			- desired_result
+				Determines the behavior if the payment reaches the receiver.
+				True for honest payments, False for jams.
+		'''
 		self.payment_id = payment_id
 		self.success_fee = success_fee
 		self.desired_result = desired_result

@@ -39,7 +39,7 @@ def main():
 		"--num_runs_per_simulation",
 		default=10,
 		type=int,
-		help="The number of simulation runs per parameter combinaiton."
+		help="The number of simulation runs per parameter combination."
 	)
 	parser.add_argument(
 		"--success_base_fee",
@@ -57,7 +57,7 @@ def main():
 		"--default_num_slots_per_channel_in_direction",
 		default=ProtocolParams["NUM_SLOTS"],
 		type=int,
-		help="Number of slots for honest channels (attackes has twice as many)."
+		help="Number of slots for honest channels (attacker has twice as many)."
 	)
 	parser.add_argument(
 		"--max_num_attempts_honest",

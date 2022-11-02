@@ -14,6 +14,9 @@ logger = logging.getLogger(__name__)
 
 
 class Scenario:
+	'''
+		A Scenario specifies all parameters of a simulation (honest and jamming).
+	'''
 
 	def __init__(
 		self,
@@ -33,6 +36,56 @@ class Scenario:
 		jammer_receives_from_nodes=None,
 		honest_must_route_via_nodes=[],
 		jammer_must_route_via_nodes=[]):
+		'''
+			- scenario_name
+				A human-readable name to be written into results files for reference.
+
+			- snapshot_finename
+				A filename of a JSON file describing LN topology (Core Lightning listchannels format).
+
+			- default_num_slots_per_channel_in_direction
+				The number of slots per channel per direction by default.
+
+			- no_balance_failures
+				If True, all payments go through if amount is lower than capacity.
+				If False, payments fail with probability = amount / capacity.
+
+			- set_default_success_fee
+				If True, set success-case fee parameters to all channels to default values.
+
+			- default_success_base_fee
+				Default value for success-case base fee.
+
+			- default_success_base_fee
+				Default value for success-case fee rate.
+
+			- honest_senders
+				The set of nodes that send honest payments.
+
+			- honest_receivers
+				The set of nodes that receive honest payments.
+
+			- target_node
+				Target node for jamming. If provided, all its adjacent channels are being jammed.
+
+			- target_node_pairs
+				Target hops (node pairs) for jamming.
+
+			- num_target_node_pairs
+				The number of target hops (allows for small-scale simulations of a subset of channels of highly-connected nodes).
+
+			- jammer_sends_to_nodes
+				The set of entry nodes for the jammer.
+
+			- jammer_receives_from_nodes
+				The set of exit nodes for the jammer.
+
+			- honest_must_route_via_nodes
+				A list of nodes that all honest payments must route through.
+
+			- jammer_must_route_via_nodes
+				A list of nodes that all jams must route through.
+		'''
 
 		self.scenario_name = scenario_name
 		self.default_success_base_fee = default_success_base_fee
@@ -95,7 +148,6 @@ class Scenario:
 			receive_from_nodes=jammer_receives_from,
 			num_slots=jammer_num_slots)
 
-		# FIXME: don't set fee for real experiment!
 		if self.set_default_success_fee:
 			self.ln_model.set_fee_for_all(FeeType.SUCCESS, default_success_base_fee, default_success_fee_rate)
 
@@ -144,6 +196,52 @@ class Scenario:
 		compact_output=False,
 		normalize_results_for_duration=True,
 		extrapolate_jamming_revenues=False):
+		'''
+			- duration
+				The simulation duration (seconds). Schedules will be generated with this as their end time.
+
+			- upfront_base_coeff_range
+				The list of values for the upfront base coefficient (multiply success-case base fee by this to get upfront base fee).
+
+			- upfront_rate_coeff_range
+				The list of values for the upfront rate coefficient (multiply success-case fee rate by this to get upfront fee rate).
+
+			- max_num_attempts_per_route_honest
+				The number of attempts per route if an honest payment fails due to balance.
+
+			- max_num_attempts_per_route_jamming
+				The number of attempts per route if a jam fails due to balance (unlikely).
+
+			- max_num_routes_honest
+				The maximum number of routes to try for an honest payment.
+
+			- num_runs_per_simulation
+				The number of simulation runs to average results across.
+
+			- max_target_node_pairs_per_route
+				The maximum number of target hops a jammer tries to jam within a single route.
+
+			- max_route_length
+				The maximum route length (number of nodes).
+
+			- honest_payments_per_second
+				Expected delay between honest payments.
+
+			- target_channel_capacity
+				The capacity of the target channel (for single channel-based simulations).
+
+			- num_jamming_batches
+				The number of jamming batches (if not given, it's derived from duration and jam delay).
+
+			- compact_output
+				Save output only for relevant nodes.
+
+			- normalize_results_for_duration
+				Normalize revenues w.r.t. duration (so that results reflect revenue per second).
+
+			- extrapolate_jamming_revenues
+				Extrapolate jamming results based on jam batch delay and fees.
+		'''
 
 		assert max_target_node_pairs_per_route is not None or max_route_length is not None
 		# route length is the number of NODES in the route, which includes two Jammer's channels
@@ -271,11 +369,8 @@ class Scenario:
 		return breakeven_stats["breakeven_coeffs"]["base"], breakeven_stats["breakeven_coeffs"]["rate"]
 
 	@staticmethod
-	def is_breakeven_reached(results_honest, results_jamming, target_nodes):
-		pass
-
-	@staticmethod
 	def get_breakeven_stats(results_honest, results_jamming, target_nodes):
+		# Get simulation statistics about the breakeven coefficient in JSON format.
 		breakeven_stats = {"breakeven_coeffs": {"base": None, "rate": None}, "stats": {}}
 		breakeven_first_reached = False
 		breakeven_upfront_base_coeff, breakeven_upfront_rate_coeff = None, None
@@ -311,6 +406,7 @@ class Scenario:
 
 	@staticmethod
 	def get_compact_output(results, relevant_nodes):
+		# Get results for relevant nodes only.
 		from copy import deepcopy
 		results_compact = deepcopy(results)
 		for i, result in enumerate(results):
@@ -323,16 +419,12 @@ class Scenario:
 		return results_compact
 
 	def results_to_json_file(self, timestamp):
-		'''
-			Dump the results into a JSON file.
-		'''
+		# Dump the results into a JSON file.
 		with open("results/" + str(timestamp) + "-results" + ".json", "w", newline="") as f:
 			json.dump(self.results, f, indent=4)
 
 	def results_to_csv_file(self, timestamp):
-		'''
-			Dump the results into a CSV file.
-		'''
+		# Dump the results into a CSV file.
 		# get all nodes names from some simulation result to avoid passing ln_graph here as a parameter
 		nodes = sorted([node for node in next(iter(self.results["simulations"]["honest"]))["revenues"]])
 		with open("results/" + str(timestamp) + "-results" + ".csv", "w", newline="") as f:

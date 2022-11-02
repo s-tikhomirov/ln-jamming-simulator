@@ -149,6 +149,9 @@ def test_get_hop_graph_from_json():
 	assert(ab_hop.get_num_channels() == 1 and ab_hop.has_channel("ABx0"))
 	assert(ab_hop.get_channel("ABx0").is_enabled_in_direction(Direction.Alph))
 	assert(ab_hop.get_channel("ABx0").is_enabled_in_direction(Direction.NonAlph))
+	ln_model.set_capacity(a, b, 101)
+	assert(ab_hop.get_channel("ABx0").get_capacity() == 101)
+	ln_model.set_capacity(a, b, 100)
 
 	# Bob - Charlie have three channels, one of them uni-directional
 	assert(g.has_edge(b, c))

@@ -63,6 +63,9 @@ class HonestSchedule(GenericSchedule):
 		payment_generation_delay_function=lambda: exponential(PaymentFlowParams["HONEST_PAYMENTS_PER_SECOND"]),
 		must_route_via_nodes=[]):
 		'''
+			- duration
+				The schedule end time.
+
 			- senders
 				A list of possible senders.
 
@@ -112,6 +115,7 @@ class JammingSchedule(GenericSchedule):
 		jam_amount = ProtocolParams["DUST_LIMIT"]
 		jam_delay = PaymentFlowParams["JAM_DELAY"]
 		if hop_to_jam_with_own_batch:
+			# if provided, an extra jam batch will be sent through this specific hop
 			for hop in hop_to_jam_with_own_batch:
 				initial_jam = Event(
 					sender=jam_sender,
@@ -122,6 +126,9 @@ class JammingSchedule(GenericSchedule):
 					must_route_via_nodes=hop)
 				self.put_event(0, initial_jam)
 		else:
+			# insert one (initial) jam into the schedule for time 0
+			# it will be sent until all target channels are jammed
+			# then, the next jam will be pushed into the schedule
 			initial_jam = Event(
 				sender=jam_sender,
 				receiver=jam_receiver,

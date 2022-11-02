@@ -5,6 +5,16 @@ logger = logging.getLogger(__name__)
 class Direction:
 
 	def __init__(self, u_node, d_node):
+		'''
+			A channel direction is alphanumerical,
+			if the upstream node id is lower than the downstream node id.
+
+			- u_node
+				The id of the upstream node.
+
+			- d_node
+				The id of the downstream node
+		'''
 		assert(u_node != d_node)
 		self.direction = u_node < d_node
 

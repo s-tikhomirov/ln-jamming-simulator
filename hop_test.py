@@ -2,7 +2,7 @@ from hop import Hop
 from channel import Channel
 from enumtypes import FeeType
 from direction import Direction
-from htlc import InFlightHtlc
+from htlc import Htlc
 
 import logging
 logger = logging.getLogger(__name__)
@@ -27,8 +27,14 @@ def test_hop_create():
 	chs_can_forward_1500 = hop.get_channels_with_condition(
 		condition=lambda ch: ch.really_can_forward_in_direction_at_time(Direction.Alph, time=0, amount=1500))
 	assert(len(chs_can_forward_1500) == 1)
+
+	def ch_in_dir_requires_total_fee_for_body(body):
+		ch_in_dir = ch.in_direction(Direction.Alph)
+		requires_fee_upfront = ch_in_dir.requires_fee_for_body(FeeType.UPFRONT, body)
+		requires_fee_success = ch_in_dir.requires_fee_for_body(FeeType.SUCCESS, body)
+		return requires_fee_upfront + requires_fee_success
 	chs_by_fee_for_100 = hop.get_channels_with_condition(
-		sorting_function=lambda ch: ch.in_direction(Direction.Alph).requires_total_fee_for_body(100))
+		sorting_function=lambda ch: ch_in_dir_requires_total_fee_for_body(body=100))
 	assert len(chs_by_fee_for_100) == 2
 	assert chs_by_fee_for_100[0].capacity == 1000
 
@@ -40,8 +46,8 @@ def test_is_jammed():
 	hop.add_channel(ch)
 	assert(not hop.cannot_forward(Direction.Alph, time=0))
 	assert(hop.get_total_num_slots_occupied_in_direction(Direction.Alph) == 0)
-	htlc_01 = InFlightHtlc(payment_id="pid1", success_fee=0, desired_result=True)
-	htlc_02 = InFlightHtlc(payment_id="pid2", success_fee=0, desired_result=True)
+	htlc_01 = Htlc(payment_id="pid1", success_fee=0, desired_result=True)
+	htlc_02 = Htlc(payment_id="pid2", success_fee=0, desired_result=True)
 	ch_in_dir_alph = ch.in_direction(Direction.Alph)
 	ch_in_dir_alph.push_htlc(resolution_time=1, in_flight_htlc=htlc_01)
 	ch_in_dir_alph.push_htlc(resolution_time=1, in_flight_htlc=htlc_02)
