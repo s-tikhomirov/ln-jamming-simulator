@@ -2,7 +2,7 @@
 
 A simulator for Lightning Network payments with unconditional fees, aimed at preventing jamming attacks.
 
-See paper: [Unjamming Lightning: A Systematic Approach](https://eprint.iacr.org/2022/1454).
+See paper: [Unjamming Lightning: A Systematic Approach](unjamming-lightning.pdf).
 
 
 ## Quick start
